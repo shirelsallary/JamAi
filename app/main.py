@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routers import auth
+
 app = FastAPI(title="JAM AI", version="1.0.0")
 
 app.add_middleware(
@@ -11,7 +13,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# TODO: include auth_router
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
 # TODO: include sessions_router
 # TODO: include queue_router
 # TODO: include playlist_router
