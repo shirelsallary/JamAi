@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth
+from app.routers import auth, spotify
 
 app = FastAPI(title="JAM AI", version="1.0.0")
 
@@ -14,6 +14,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(spotify.router, prefix="/auth", tags=["spotify"])
 # TODO: include sessions_router
 # TODO: include queue_router
 # TODO: include playlist_router

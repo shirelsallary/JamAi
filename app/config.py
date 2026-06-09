@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     SPOTIFY_REDIRECT_URI: str
     YOUTUBE_CLIENT_ID: str
     YOUTUBE_CLIENT_SECRET: str
+    ENCRYPTION_KEY: str
 
     class Config:
         env_file = ".env"
