@@ -21,21 +21,17 @@ async def optimize_queue(session_id: str, broadcast_fn) -> None:
         logger.exception("optimize_queue failed for session %s", session_id)
 
 
-async def _run(session_id: str, db, broadcast_fn) -> None:
-    # Step A — load participants
-    result = await db.execute(
-        select(User)
-        .join(SessionParticipant, SessionParticipant.user_id == User.id)
-        .where(SessionParticipant.session_id == UUID(session_id))
-    )
-    participants = list(result.scalars().all())
-
+async def build_scored_recommendations(
+    participants: list[User],
+) -> list[tuple[dict, float, str]]:
+    """
+    Shared helper used by both queue_optimizer and playlist_service.
+    Returns scored tracks: list of (track_dict, weight_score, platform).
+    """
     if not participants:
-        return
+        return []
 
     total = len(participants)
-
-    # Step B/C — fetch preferences and audio features per participant
     all_genres: list[str] = []
     valences: list[float] = []
     energies: list[float] = []
@@ -51,7 +47,6 @@ async def _run(session_id: str, db, broadcast_fn) -> None:
         for artist in top_artists:
             all_genres.extend(artist.get("genres", []))
 
-        # Audio features are Spotify-only
         if isinstance(adapter, SpotifyAdapter) and top_tracks:
             try:
                 ids = [t["track_id"] for t in top_tracks if t.get("track_id")]
@@ -66,11 +61,8 @@ async def _run(session_id: str, db, broadcast_fn) -> None:
 
     avg_valence = sum(valences) / len(valences) if valences else 0.5
     avg_energy = sum(energies) / len(energies) if energies else 0.5
-
     top_genres = [g for g, _ in Counter(all_genres).most_common(2)] or ["pop"]
 
-    # Step D — get recommendations; track which participants recommended each track
-    # {track_id: set_of_user_ids} — deduped per user so count = participants who got it
     recommenders: dict[str, set[str]] = {}
     track_meta: dict[str, dict] = {}
     track_platform: dict[str, set[str]] = {}
@@ -91,13 +83,11 @@ async def _run(session_id: str, db, broadcast_fn) -> None:
             tid = track.get("track_id")
             if not tid or track.get("duration_ms", 0) <= 0:
                 continue
-
             uid = str(user.id)
             recommenders.setdefault(tid, set()).add(uid)
             track_meta.setdefault(tid, track)
             track_platform.setdefault(tid, set()).add(user.platform)
 
-    # Step E — compute weight_score
     scored: list[tuple[dict, float, str]] = []
     for tid, track in track_meta.items():
         score = len(recommenders[tid]) / total
@@ -108,6 +98,22 @@ async def _run(session_id: str, db, broadcast_fn) -> None:
         scored.append((track, score, platform))
 
     scored.sort(key=lambda x: x[1], reverse=True)
+    return scored
+
+
+async def _run(session_id: str, db, broadcast_fn) -> None:
+    # Step A — load participants
+    result = await db.execute(
+        select(User)
+        .join(SessionParticipant, SessionParticipant.user_id == User.id)
+        .where(SessionParticipant.session_id == UUID(session_id))
+    )
+    participants = list(result.scalars().all())
+
+    if not participants:
+        return
+
+    scored = await build_scored_recommendations(participants)
 
     # Step F — replace queue_tracks atomically
     await db.execute(

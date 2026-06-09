@@ -108,6 +108,7 @@ class ExportResponse(BaseModel):
 
 
 class PlaylistGenerateRequest(BaseModel):
+    session_id: str
     duration_minutes: int
 
     @field_validator("duration_minutes")
