@@ -4,6 +4,7 @@ from uuid import UUID
 
 from ytmusicapi import YTMusic
 
+from app.services.cache_service import cache, TOP_TRACKS_TTL, RECOMMENDATIONS_TTL
 from app.services.retry_handler import with_retry
 
 
@@ -41,6 +42,10 @@ class YouTubeAdapter:
         }
 
     async def get_top_tracks(self, limit: int = 20) -> list:
+        cache_key = f"yt_top_tracks:{self.user_id}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         items = await with_retry(lambda: _run_sync(self.yt.get_library_songs, limit=limit))
         result = []
         for item in (items or []):
@@ -51,6 +56,7 @@ class YouTubeAdapter:
                 "artist": artists[0]["name"] if artists else "",
                 "duration_ms": _duration_to_ms(item.get("duration")),
             })
+        cache.set(cache_key, result, TOP_TRACKS_TTL)
         return result
 
     async def get_top_artists(self, limit: int = 10) -> list:
@@ -86,6 +92,10 @@ class YouTubeAdapter:
         target_energy: float,
         limit: int = 20,
     ) -> list:
+        cache_key = f"yt_recommendations:{','.join(sorted(seed_genres))}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         sections = await with_retry(lambda: _run_sync(self.yt.get_home))
         tracks = []
         for section in (sections or []):
@@ -102,7 +112,9 @@ class YouTubeAdapter:
                     break
             if len(tracks) >= limit:
                 break
-        return tracks[:limit]
+        result = tracks[:limit]
+        cache.set(cache_key, result, RECOMMENDATIONS_TTL)
+        return result
 
     async def get_current_playback(self) -> dict | None:
         # YouTube Music API doesn't expose playback state

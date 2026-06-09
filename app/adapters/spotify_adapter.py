@@ -5,6 +5,12 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.config import settings
+from app.services.cache_service import (
+    cache,
+    AUDIO_FEATURES_TTL,
+    TOP_TRACKS_TTL,
+    RECOMMENDATIONS_TTL,
+)
 from app.services.retry_handler import with_retry
 
 _ACCOUNTS = "https://accounts.spotify.com"
@@ -109,13 +115,17 @@ class SpotifyAdapter:
         }
 
     async def get_top_tracks(self, limit: int = 20) -> list:
+        cache_key = f"top_tracks:{self.user_id}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         async with httpx.AsyncClient() as client:
             async def _call():
                 r = await self._get(client, f"{_API}/me/top/tracks", params={"limit": limit})
                 r.raise_for_status()
                 return r.json()
             data = await with_retry(_call)
-        return [
+        result = [
             {
                 "track_id": item["id"],
                 "title": item["name"],
@@ -124,15 +134,21 @@ class SpotifyAdapter:
             }
             for item in data.get("items", [])
         ]
+        cache.set(cache_key, result, TOP_TRACKS_TTL)
+        return result
 
     async def get_top_artists(self, limit: int = 10) -> list:
+        cache_key = f"top_artists:{self.user_id}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         async with httpx.AsyncClient() as client:
             async def _call():
                 r = await self._get(client, f"{_API}/me/top/artists", params={"limit": limit})
                 r.raise_for_status()
                 return r.json()
             data = await with_retry(_call)
-        return [
+        result = [
             {
                 "artist_id": item["id"],
                 "name": item["name"],
@@ -140,8 +156,14 @@ class SpotifyAdapter:
             }
             for item in data.get("items", [])
         ]
+        cache.set(cache_key, result, TOP_TRACKS_TTL)
+        return result
 
     async def get_audio_features(self, track_ids: list[str]) -> list:
+        cache_key = f"audio_features:{','.join(sorted(track_ids))}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         async with httpx.AsyncClient() as client:
             async def _call():
                 r = await self._get(
@@ -152,7 +174,7 @@ class SpotifyAdapter:
                 r.raise_for_status()
                 return r.json()
             data = await with_retry(_call)
-        return [
+        result = [
             {
                 "track_id": af["id"],
                 "valence": af["valence"],
@@ -163,6 +185,8 @@ class SpotifyAdapter:
             for af in data.get("audio_features", [])
             if af  # Spotify returns None entries for invalid IDs
         ]
+        cache.set(cache_key, result, AUDIO_FEATURES_TTL)
+        return result
 
     async def get_recommendations(
         self,
@@ -171,6 +195,13 @@ class SpotifyAdapter:
         target_energy: float,
         limit: int = 20,
     ) -> list:
+        cache_key = (
+            f"recommendations:{','.join(sorted(seed_genres))}"
+            f":{round(target_valence, 2)}:{round(target_energy, 2)}"
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         async with httpx.AsyncClient() as client:
             async def _call():
                 r = await self._get(
@@ -186,7 +217,7 @@ class SpotifyAdapter:
                 r.raise_for_status()
                 return r.json()
             data = await with_retry(_call)
-        return [
+        result = [
             {
                 "track_id": t["id"],
                 "title": t["name"],
@@ -195,6 +226,8 @@ class SpotifyAdapter:
             }
             for t in data.get("tracks", [])
         ]
+        cache.set(cache_key, result, RECOMMENDATIONS_TTL)
+        return result
 
     async def add_to_queue(self, track_uri: str) -> None:
         async with httpx.AsyncClient() as client:

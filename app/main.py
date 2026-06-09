@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.routers import auth, playlist, queue, sessions, spotify
+from app.routers import admin, auth, playlist, queue, sessions, spotify
 
 app = FastAPI(title="JAM AI", version="1.0.0")
 
@@ -19,6 +19,7 @@ app.include_router(spotify.router, prefix="/auth", tags=["spotify"])
 app.include_router(sessions.router, tags=["sessions"])
 app.include_router(queue.router, tags=["queue"])
 app.include_router(playlist.router, tags=["playlist"])
+app.include_router(admin.router)
 
 
 @app.exception_handler(Exception)

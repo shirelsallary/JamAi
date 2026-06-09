@@ -14,6 +14,7 @@ from app.models.models import PlaybackEvent, QueueTrack, Session
 from app.routers.auth import get_current_user
 from app.schemas.schemas import QueueTrackResponse, SkipRequest
 from app.services.connection_manager import manager
+from app.services.debounce_service import debouncer
 from app.services.queue_optimizer import optimize_queue
 from app.services.session_buffer import session_buffer
 
@@ -43,7 +44,11 @@ async def websocket_endpoint(
         manager.disconnect(session_id, websocket)
         return
 
-    asyncio.create_task(optimize_queue(session_id, manager.broadcast))
+    debouncer.schedule(
+        session_id,
+        lambda: asyncio.create_task(optimize_queue(session_id, manager.broadcast)),
+        asyncio.get_event_loop(),
+    )
 
     try:
         while True:
