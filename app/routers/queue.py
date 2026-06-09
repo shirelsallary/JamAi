@@ -2,18 +2,20 @@ import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.adapters.platform_factory import get_platform_adapter
 from app.config import settings
 from app.database import get_db
-from app.models.models import PlaybackEvent, QueueTrack
+from app.models.models import PlaybackEvent, QueueTrack, Session
 from app.routers.auth import get_current_user
 from app.schemas.schemas import QueueTrackResponse, SkipRequest
-from app.services.auth_service import get_user_by_email
 from app.services.connection_manager import manager
 from app.services.queue_optimizer import optimize_queue
+from app.services.session_buffer import session_buffer
 
 router = APIRouter()
 
@@ -26,7 +28,6 @@ async def websocket_endpoint(
 ):
     await manager.connect(session_id, websocket)
 
-    # Verify JWT from query param
     if not token:
         await websocket.close(code=1008)
         manager.disconnect(session_id, websocket)
@@ -42,10 +43,8 @@ async def websocket_endpoint(
         manager.disconnect(session_id, websocket)
         return
 
-    # Trigger queue optimization without blocking the WebSocket
     asyncio.create_task(optimize_queue(session_id, manager.broadcast))
 
-    # Keep connection alive until client disconnects
     try:
         while True:
             await websocket.receive_text()
@@ -61,7 +60,6 @@ async def skip(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Current track = lowest position in the queue
     result = await db.execute(
         select(QueueTrack)
         .where(QueueTrack.session_id == UUID(session_id))
@@ -93,15 +91,60 @@ async def skip(
     return {"message": "skip recorded, queue updating"}
 
 
-@router.get("/queue/{session_id}", response_model=list[QueueTrackResponse])
+@router.get("/queue/{session_id}")
 async def get_queue(
     session_id: str,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    try:
+        result = await db.execute(
+            select(QueueTrack)
+            .where(QueueTrack.session_id == UUID(session_id))
+            .order_by(QueueTrack.position.asc())
+        )
+        tracks = list(result.scalars().all())
+        serialized = [
+            QueueTrackResponse.model_validate(t).model_dump(mode="json") for t in tracks
+        ]
+        session_buffer.save(session_id, serialized)
+        return JSONResponse(content=serialized)
+
+    except Exception:
+        buffered = session_buffer.get(session_id)
+        if buffered is not None:
+            return JSONResponse(
+                content=buffered,
+                headers={"X-Queue-Source": "buffer"},
+            )
+        raise
+
+
+@router.post("/sessions/{session_id}/reconnect")
+async def reconnect_session(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
-        select(QueueTrack)
-        .where(QueueTrack.session_id == UUID(session_id))
-        .order_by(QueueTrack.position.asc())
+        select(Session).where(
+            Session.id == UUID(session_id),
+            Session.status == "active",
+        )
     )
-    return list(result.scalars().all())
+    session = result.scalar_one_or_none()
+    if session is None:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or not active",
+        )
+
+    try:
+        adapter = get_platform_adapter(current_user)
+        await adapter.get_current_playback()
+        background_tasks.add_task(optimize_queue, session_id, manager.broadcast)
+        return {"status": "reconnected"}
+    except Exception:
+        return {"status": "failed", "retry_after": 30}

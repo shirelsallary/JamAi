@@ -4,6 +4,8 @@ from uuid import UUID
 
 from ytmusicapi import YTMusic
 
+from app.services.retry_handler import with_retry
+
 
 def _duration_to_ms(duration_str: str | None) -> int:
     """Convert 'mm:ss' or 'hh:mm:ss' string to milliseconds."""
@@ -29,12 +31,9 @@ def _run_sync(func, *args, **kwargs):
 class YouTubeAdapter:
     def __init__(self, user_id: UUID, auth_json: str):
         self.user_id = user_id
-        # YTMusic accepts an OAuth JSON string directly
         self.yt = YTMusic(auth_json)
 
     async def get_user_profile(self) -> dict:
-        # ytmusicapi does not expose a profile endpoint;
-        # return what we know from the OAuth JSON header field
         return {
             "id": str(self.user_id),
             "email": None,
@@ -42,7 +41,7 @@ class YouTubeAdapter:
         }
 
     async def get_top_tracks(self, limit: int = 20) -> list:
-        items = await _run_sync(self.yt.get_library_songs, limit=limit)
+        items = await with_retry(lambda: _run_sync(self.yt.get_library_songs, limit=limit))
         result = []
         for item in (items or []):
             artists = item.get("artists") or []
@@ -55,18 +54,20 @@ class YouTubeAdapter:
         return result
 
     async def get_top_artists(self, limit: int = 10) -> list:
-        items = await _run_sync(self.yt.get_library_artists, limit=limit)
+        items = await with_retry(lambda: _run_sync(self.yt.get_library_artists, limit=limit))
         result = []
         for item in (items or [])[:limit]:
             result.append({
                 "artist_id": item.get("browseId", ""),
                 "name": item.get("artist", ""),
-                "genres": [],  # ytmusicapi doesn't return genres here
+                "genres": [],
             })
         return result
 
     async def search_tracks(self, query: str, limit: int = 20) -> list:
-        items = await _run_sync(self.yt.search, query, filter="songs", limit=limit)
+        items = await with_retry(
+            lambda: _run_sync(self.yt.search, query, filter="songs", limit=limit)
+        )
         result = []
         for item in (items or []):
             artists = item.get("artists") or []
@@ -85,8 +86,7 @@ class YouTubeAdapter:
         target_energy: float,
         limit: int = 20,
     ) -> list:
-        # ytmusicapi's home feed is the closest analog to recommendations
-        sections = await _run_sync(self.yt.get_home)
+        sections = await with_retry(lambda: _run_sync(self.yt.get_home))
         tracks = []
         for section in (sections or []):
             for item in section.get("contents", []):
@@ -104,15 +104,23 @@ class YouTubeAdapter:
                 break
         return tracks[:limit]
 
+    async def get_current_playback(self) -> dict | None:
+        # YouTube Music API doesn't expose playback state
+        return None
+
     async def create_playlist(self, name: str, track_ids: list[str]) -> str:
-        playlist_id = await _run_sync(self.yt.create_playlist, name, "")
+        playlist_id = await with_retry(
+            lambda: _run_sync(self.yt.create_playlist, name, "")
+        )
         if track_ids:
-            await _run_sync(self.yt.add_playlist_items, playlist_id, track_ids)
+            await with_retry(
+                lambda: _run_sync(self.yt.add_playlist_items, playlist_id, track_ids)
+            )
         return f"https://music.youtube.com/playlist?list={playlist_id}"
 
     async def health_check(self) -> bool:
         try:
-            await _run_sync(self.yt.get_home)
+            await with_retry(lambda: _run_sync(self.yt.get_home))
             return True
         except Exception:
             return False

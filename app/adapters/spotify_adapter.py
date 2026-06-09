@@ -5,6 +5,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.config import settings
+from app.services.retry_handler import with_retry
 
 _ACCOUNTS = "https://accounts.spotify.com"
 _API = "https://api.spotify.com/v1"
@@ -58,15 +59,18 @@ class SpotifyAdapter:
     # ------------------------------------------------------------------
 
     async def refresh_access_token(self) -> str:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{_ACCOUNTS}/api/token",
-                headers={"Authorization": _auth_header()},
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": self.refresh_token,
-                },
-            )
+        async def _call():
+            async with httpx.AsyncClient() as client:
+                return await client.post(
+                    f"{_ACCOUNTS}/api/token",
+                    headers={"Authorization": _auth_header()},
+                    data={
+                        "grant_type": "refresh_token",
+                        "refresh_token": self.refresh_token,
+                    },
+                )
+
+        response = await with_retry(_call)
         if response.status_code == 401:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -75,7 +79,7 @@ class SpotifyAdapter:
         data = response.json()
         self.access_token = data["access_token"]
 
-        # Persist the new token to the DB
+        # Persist the new token to the DB (deferred imports to avoid circular)
         from sqlalchemy import update
         from app.database import AsyncSessionLocal
         from app.models.models import User
@@ -93,9 +97,11 @@ class SpotifyAdapter:
 
     async def get_user_profile(self) -> dict:
         async with httpx.AsyncClient() as client:
-            r = await self._get(client, f"{_API}/me")
-        r.raise_for_status()
-        data = r.json()
+            async def _call():
+                r = await self._get(client, f"{_API}/me")
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
         return {
             "id": data.get("id"),
             "email": data.get("email"),
@@ -104,8 +110,11 @@ class SpotifyAdapter:
 
     async def get_top_tracks(self, limit: int = 20) -> list:
         async with httpx.AsyncClient() as client:
-            r = await self._get(client, f"{_API}/me/top/tracks", params={"limit": limit})
-        r.raise_for_status()
+            async def _call():
+                r = await self._get(client, f"{_API}/me/top/tracks", params={"limit": limit})
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
         return [
             {
                 "track_id": item["id"],
@@ -113,30 +122,36 @@ class SpotifyAdapter:
                 "artist": item["artists"][0]["name"] if item["artists"] else "",
                 "duration_ms": item["duration_ms"],
             }
-            for item in r.json().get("items", [])
+            for item in data.get("items", [])
         ]
 
     async def get_top_artists(self, limit: int = 10) -> list:
         async with httpx.AsyncClient() as client:
-            r = await self._get(client, f"{_API}/me/top/artists", params={"limit": limit})
-        r.raise_for_status()
+            async def _call():
+                r = await self._get(client, f"{_API}/me/top/artists", params={"limit": limit})
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
         return [
             {
                 "artist_id": item["id"],
                 "name": item["name"],
                 "genres": item.get("genres", []),
             }
-            for item in r.json().get("items", [])
+            for item in data.get("items", [])
         ]
 
     async def get_audio_features(self, track_ids: list[str]) -> list:
         async with httpx.AsyncClient() as client:
-            r = await self._get(
-                client,
-                f"{_API}/audio-features",
-                params={"ids": ",".join(track_ids)},
-            )
-        r.raise_for_status()
+            async def _call():
+                r = await self._get(
+                    client,
+                    f"{_API}/audio-features",
+                    params={"ids": ",".join(track_ids)},
+                )
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
         return [
             {
                 "track_id": af["id"],
@@ -145,7 +160,7 @@ class SpotifyAdapter:
                 "danceability": af["danceability"],
                 "tempo": af["tempo"],
             }
-            for af in r.json().get("audio_features", [])
+            for af in data.get("audio_features", [])
             if af  # Spotify returns None entries for invalid IDs
         ]
 
@@ -157,17 +172,20 @@ class SpotifyAdapter:
         limit: int = 20,
     ) -> list:
         async with httpx.AsyncClient() as client:
-            r = await self._get(
-                client,
-                f"{_API}/recommendations",
-                params={
-                    "seed_genres": ",".join(seed_genres),
-                    "target_valence": target_valence,
-                    "target_energy": target_energy,
-                    "limit": limit,
-                },
-            )
-        r.raise_for_status()
+            async def _call():
+                r = await self._get(
+                    client,
+                    f"{_API}/recommendations",
+                    params={
+                        "seed_genres": ",".join(seed_genres),
+                        "target_valence": target_valence,
+                        "target_energy": target_energy,
+                        "limit": limit,
+                    },
+                )
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
         return [
             {
                 "track_id": t["id"],
@@ -175,29 +193,31 @@ class SpotifyAdapter:
                 "artist": t["artists"][0]["name"] if t["artists"] else "",
                 "duration_ms": t["duration_ms"],
             }
-            for t in r.json().get("tracks", [])
+            for t in data.get("tracks", [])
         ]
 
     async def add_to_queue(self, track_uri: str) -> None:
         async with httpx.AsyncClient() as client:
-            r = await self._post(
-                client,
-                f"{_API}/me/player/queue",
-                params={"uri": track_uri},
-            )
-        if r.status_code not in (200, 204):
-            raise HTTPException(
-                status_code=r.status_code,
-                detail=f"Failed to add track to queue: {r.text}",
-            )
+            async def _call():
+                r = await self._post(
+                    client,
+                    f"{_API}/me/player/queue",
+                    params={"uri": track_uri},
+                )
+                r.raise_for_status()
+            await with_retry(_call)
 
     async def get_current_playback(self) -> dict | None:
         async with httpx.AsyncClient() as client:
-            r = await self._get(client, f"{_API}/me/player")
-        if r.status_code == 204 or not r.content:
+            async def _call():
+                r = await self._get(client, f"{_API}/me/player")
+                if r.status_code == 204 or not r.content:
+                    return None
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
+        if data is None:
             return None
-        r.raise_for_status()
-        data = r.json()
         track = data.get("item")
         if not track:
             return None
@@ -212,20 +232,25 @@ class SpotifyAdapter:
         spotify_user_id = spotify_profile["id"]
 
         async with httpx.AsyncClient() as client:
-            r = await self._post(
-                client,
-                f"{_API}/users/{spotify_user_id}/playlists",
-                json={"name": name, "public": True},
-            )
-            r.raise_for_status()
-            playlist_id = r.json()["id"]
-            playlist_url = r.json()["external_urls"]["spotify"]
+            async def _create():
+                r = await self._post(
+                    client,
+                    f"{_API}/users/{spotify_user_id}/playlists",
+                    json={"name": name, "public": True},
+                )
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_create)
+            playlist_id = data["id"]
+            playlist_url = data["external_urls"]["spotify"]
 
-            r2 = await self._post(
-                client,
-                f"{_API}/playlists/{playlist_id}/tracks",
-                json={"uris": track_uris},
-            )
-            r2.raise_for_status()
+            async def _add_tracks():
+                r2 = await self._post(
+                    client,
+                    f"{_API}/playlists/{playlist_id}/tracks",
+                    json={"uris": track_uris},
+                )
+                r2.raise_for_status()
+            await with_retry(_add_tracks)
 
         return playlist_url
