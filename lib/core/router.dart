@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/screens/login_screen.dart';
 import '../features/auth/screens/register_screen.dart';
 import '../features/auth/screens/connect_platform_screen.dart';
+import '../features/auth/screens/youtube_webview_screen.dart';
 import '../features/home/screens/home_screen.dart';
 import '../features/session/screens/create_session_screen.dart';
 import '../features/session/screens/join_session_screen.dart';
@@ -48,6 +49,11 @@ final GoRouter appRouter = GoRouter(
       path: '/connect-platform',
       pageBuilder: (context, state) =>
           _slidePage(const ConnectPlatformScreen()),
+    ),
+    GoRoute(
+      path: '/youtube-connect',
+      pageBuilder: (context, state) =>
+          _slidePage(const YouTubeWebViewScreen()),
     ),
     GoRoute(
       path: '/home',

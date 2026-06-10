@@ -112,7 +112,7 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
               _PlatformConnectButton(
                 label: 'Connect YouTube Music',
                 color: kRed,
-                onTap: _isConnecting ? null : () => _connectPlatform('youtube'),
+                onTap: _isConnecting ? null : () => context.go('/youtube-connect'),
               ),
               const SizedBox(height: 24),
               if (_error != null)
