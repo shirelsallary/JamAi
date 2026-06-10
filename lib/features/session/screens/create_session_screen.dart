@@ -31,7 +31,7 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
   String? _customTime;
   bool _isLoading = false;
 
-  bool get _canCreate => !_isLoading;
+  bool get _canCreate => !_isLoading && _selectedPlatform != null;
 
   Future<void> _createSession() async {
     final token = await AuthService.getToken();
@@ -176,8 +176,8 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
             ElevatedButton(
               onPressed: _canCreate ? _createSession : null,
               style: ElevatedButton.styleFrom(
-                backgroundColor: kPrimary,
-                foregroundColor: Colors.white,
+                backgroundColor: _canCreate ? kPrimary : Colors.grey.shade300,
+                foregroundColor: _canCreate ? Colors.white : kTextSecondary,
                 minimumSize: const Size(double.infinity, 48),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(24),
@@ -194,6 +194,14 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
                     )
                   : const Text('Create JAM Session'),
             ),
+            if (_selectedPlatform == null) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Please select a platform to continue',
+                style: TextStyle(color: kRed, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+            ],
             const SizedBox(height: 24),
           ],
         ),
