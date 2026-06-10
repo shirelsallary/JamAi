@@ -1,17 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.schemas.schemas import Token, UserCreate, UserLogin, UserResponse
+from app.models.models import User
+from app.schemas.schemas import Token, UserCreate, UserLogin, UserResponse, YouTubeConnectRequest
 from app.services.auth_service import (
     authenticate_user,
     create_access_token,
     get_user_by_email,
     register_user,
 )
+from app.services.token_encryption import encrypt_token
 
 router = APIRouter()
 
@@ -62,3 +65,19 @@ async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 async def me(current_user=Depends(get_current_user)):
     return current_user
+
+
+@router.post("/youtube/connect")
+async def youtube_connect(
+    payload: YouTubeConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    encrypted = encrypt_token(payload.cookies)
+    await db.execute(
+        update(User)
+        .where(User.id == current_user.id)
+        .values(platform="youtube", platform_token=encrypted)
+    )
+    await db.commit()
+    return {"message": "YouTube Music connected"}

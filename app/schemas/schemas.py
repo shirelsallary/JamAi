@@ -30,9 +30,14 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     platform: str
+    platform_token: str = ""
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class YouTubeConnectRequest(BaseModel):
+    cookies: str
 
 
 class Token(BaseModel):
