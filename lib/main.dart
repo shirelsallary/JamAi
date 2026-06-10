@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'core/theme.dart';
+import 'core/router.dart';
 
 void main() {
   runApp(const JamAiApp());
@@ -10,15 +11,11 @@ class JamAiApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return MaterialApp.router(
       title: 'JAM AI',
       theme: jamAiTheme,
       debugShowCheckedModeBanner: false,
-      home: const Scaffold(
-        body: Center(
-          child: Text('JAM AI is running ✓'),
-        ),
-      ),
+      routerConfig: appRouter,
     );
   }
 }
