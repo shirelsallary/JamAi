@@ -52,7 +52,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (token != null) {
           await AuthService.saveToken(token);
           if (!mounted) return;
-          context.go('/home');
+          context.go('/connect-platform');
         } else {
           _showError('Registered! Please log in.');
           context.go('/');

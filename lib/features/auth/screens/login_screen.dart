@@ -40,7 +40,12 @@ class _LoginScreenState extends State<LoginScreen> {
       if (token != null) {
         await AuthService.saveToken(token);
         if (!mounted) return;
-        context.go('/home');
+        final me = await AuthService.getMe(token);
+        if (!mounted) return;
+        final platformToken = me?['platform_token'];
+        final hasPlatform =
+            platformToken != null && platformToken.toString().isNotEmpty;
+        context.go(hasPlatform ? '/home' : '/connect-platform');
       } else {
         _showError('Invalid email or password');
       }

@@ -44,4 +44,17 @@ class AuthService {
   }
 
   static Future<bool> isLoggedIn() async => (await getToken()) != null;
+
+  static Future<Map<String, dynamic>?> getMe(String token) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_base/auth/me'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
 }
