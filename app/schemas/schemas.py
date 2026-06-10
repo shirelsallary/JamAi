@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, field_validator
@@ -44,10 +45,10 @@ class Token(BaseModel):
 # ---------------------------------------------------------------------------
 
 class ContextVector(BaseModel):
-    genre: str
-    mood: str
-    language: str
-    time: str
+    genre: Optional[str] = None
+    mood: Optional[str] = None
+    language: Optional[str] = None
+    time: Optional[str] = None
 
 
 class SessionCreate(BaseModel):
