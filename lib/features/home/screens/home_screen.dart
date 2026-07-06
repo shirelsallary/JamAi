@@ -114,19 +114,29 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : _sessions.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No sessions yet',
-                          style: TextStyle(color: kTextSecondary),
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: _sessions.length,
-                        itemBuilder: (ctx, i) =>
-                            _SessionCard(session: _sessions[i]),
-                      ),
+                : RefreshIndicator(
+                    color: kPrimary,
+                    onRefresh: _loadHistory,
+                    child: _sessions.isEmpty
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: const [
+                              SizedBox(height: 120),
+                              Center(
+                                child: Text(
+                                  'No sessions yet',
+                                  style: TextStyle(color: kTextSecondary),
+                                ),
+                              ),
+                            ],
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            itemCount: _sessions.length,
+                            itemBuilder: (ctx, i) =>
+                                _SessionCard(session: _sessions[i]),
+                          ),
+                  ),
           ),
         ],
       ),

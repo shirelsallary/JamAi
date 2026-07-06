@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/auth/screens/splash_screen.dart';
 import '../features/auth/screens/login_screen.dart';
 import '../features/auth/screens/register_screen.dart';
 import '../features/auth/screens/connect_platform_screen.dart';
@@ -35,8 +36,12 @@ CustomTransitionPage<void> _slidePage(Widget child) {
 }
 
 final GoRouter appRouter = GoRouter(
-  initialLocation: '/',
+  initialLocation: '/splash',
   routes: [
+    GoRoute(
+      path: '/splash',
+      pageBuilder: (context, state) => _slidePage(const SplashScreen()),
+    ),
     GoRoute(
       path: '/',
       pageBuilder: (context, state) => _slidePage(const LoginScreen()),
