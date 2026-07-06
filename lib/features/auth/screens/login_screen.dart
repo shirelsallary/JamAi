@@ -96,12 +96,17 @@ class _LoginScreenState extends State<LoginScreen> {
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
+                enableSuggestions: false,
+                autocorrect: false,
                 decoration: const InputDecoration(labelText: 'Email'),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _passwordController,
                 obscureText: true,
+                keyboardType: TextInputType.visiblePassword,
+                enableSuggestions: false,
+                autocorrect: false,
                 decoration: const InputDecoration(labelText: 'Password'),
                 onSubmitted: (_) => _login(),
               ),
@@ -119,9 +124,15 @@ class _LoginScreenState extends State<LoginScreen> {
                       )
                     : const Text('Login'),
               ),
-              TextButton(
-                onPressed: () => context.go('/register'),
-                child: const Text("Don't have an account? Register"),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('New here?', style: TextStyle(color: kTextSecondary)),
+                  TextButton(
+                    onPressed: () => context.go('/register'),
+                    child: const Text('Create account →'),
+                  ),
+                ],
               ),
             ],
           ),

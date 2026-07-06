@@ -18,32 +18,61 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   String? _error;
 
   Future<void> _connectPlatform(String platform) async {
-    setState(() {
-      _isConnecting = true;
-      _error = null;
-    });
+    final token = await AuthService.getToken();
+    if (!mounted) return;
+    if (token == null) {
+      context.go('/');
+      return;
+    }
+
+    setState(() => _isConnecting = true);
+
+    final uri = Uri.parse('$kBaseUrl/auth/oauth/$platform');
 
     try {
-      final url = Uri.parse('$kBaseUrl/auth/oauth/$platform');
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
         if (!mounted) return;
-        setState(() => _showVerifyButton = true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Follow the steps in your browser, then come back here'),
-            duration: Duration(seconds: 5),
-          ),
-        );
+        setState(() {
+          _isConnecting = false;
+          _showVerifyButton = true;
+        });
       } else {
-        setState(() => _error = 'Could not open browser. Try again.');
+        throw Exception('Cannot launch URL');
       }
     } catch (_) {
-      if (mounted) setState(() => _error = 'Connection failed. Please try again.');
-    } finally {
-      if (mounted) setState(() => _isConnecting = false);
+      if (!mounted) return;
+      setState(() => _isConnecting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Opening browser failed on this device. '
+            'This works automatically on Android.',
+          ),
+          backgroundColor: kRed,
+          duration: Duration(seconds: 4),
+        ),
+      );
     }
+  }
+
+  void _showYoutubeUnsupportedDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('YouTube Music'),
+        content: const Text(
+          'YouTube Music connection requires the Android version of the app. '
+          'On desktop, you can continue with Spotify instead.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _verifyAndContinue() async {
@@ -78,6 +107,15 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: kBackground,
+      appBar: AppBar(
+        title: const Text('Connect Platform'),
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
+                onPressed: () => context.pop(),
+              )
+            : null,
+      ),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -112,7 +150,7 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
               _PlatformConnectButton(
                 label: 'Connect YouTube Music',
                 color: kRed,
-                onTap: _isConnecting ? null : () => context.go('/youtube-connect'),
+                onTap: _isConnecting ? null : _showYoutubeUnsupportedDialog,
               ),
               const SizedBox(height: 24),
               if (_error != null)

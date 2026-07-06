@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'constants.dart';
 
 class AuthService {
-  static const _base = kBaseUrl;
+  static String get _base => kBaseUrl;
 
   static Future<String?> login(String email, String password) async {
     final response = await http.post(

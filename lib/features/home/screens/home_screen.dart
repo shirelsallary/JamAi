@@ -16,6 +16,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _sessions = [];
   bool _loading = true;
+  int _currentIndex = 0;
 
   @override
   void initState() {
@@ -128,6 +129,30 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
           ),
         ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        selectedItemColor: kPrimary,
+        unselectedItemColor: kTextSecondary,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.add_circle_outline),
+            label: 'Create JAM',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.qr_code_scanner),
+            label: 'Join JAM',
+          ),
+        ],
+        onTap: (index) {
+          if (index == 0) setState(() => _currentIndex = 0);
+          if (index == 1) context.go('/session/create');
+          if (index == 2) context.go('/session/join');
+        },
       ),
     );
   }
