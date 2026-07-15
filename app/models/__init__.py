@@ -1,4 +1,5 @@
 from app.models.models import (
+    OAuthState,
     PlaybackEvent,
     QueueTrack,
     Session,
@@ -14,4 +15,5 @@ __all__ = [
     "QueueTrack",
     "PlaybackEvent",
     "SessionCandidateTrack",
+    "OAuthState",
 ]

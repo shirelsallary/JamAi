@@ -295,3 +295,34 @@ class SessionCandidateTrack(Base):
     )
 
     session: Mapped["Session"] = relationship("Session", back_populates="candidate_tracks")
+
+
+class OAuthState(Base):
+    """
+    Short-lived, single-use CSRF-style state tokens for the mobile OAuth
+    Authorization Code flow (Bug 2 fix). Generated server-side, tied to the
+    logged-in user, before the app opens the external browser; consumed
+    exactly once when the deep-link callback exchanges the code.
+    """
+
+    __tablename__ = "oauth_states"
+
+    id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    state: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "platform IN ('spotify', 'youtube')", name="oauth_states_platform_check"
+        ),
+    )

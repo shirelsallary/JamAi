@@ -28,6 +28,7 @@ if not hasattr(SQLiteTypeCompiler, "visit_JSONB"):
 from app.database import Base, get_db
 from app.main import app
 from app.models.models import (  # noqa: F401 — registers all models with Base.metadata
+    OAuthState,
     PlaybackEvent,
     QueueTrack,
     Session as DBSession,
@@ -79,6 +80,7 @@ for _model in (
     QueueTrack,
     PlaybackEvent,
     SessionCandidateTrack,
+    OAuthState,
 ):
     event.listen(_model, "before_insert", _fill_server_defaults)
 

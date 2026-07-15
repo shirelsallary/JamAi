@@ -40,6 +40,15 @@ class YouTubeConnectRequest(BaseModel):
     cookies: str
 
 
+class SpotifyAuthorizeResponse(BaseModel):
+    authorize_url: str
+
+
+class SpotifyExchangeRequest(BaseModel):
+    code: str
+    state: str
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
