@@ -31,6 +31,7 @@ from app.models.models import (  # noqa: F401 — registers all models with Base
     PlaybackEvent,
     QueueTrack,
     Session as DBSession,
+    SessionCandidateTrack,
     SessionParticipant,
     User,
 )
@@ -71,7 +72,14 @@ def _fill_server_defaults(mapper, connection, target):
             setattr(target, col.key, datetime.now(timezone.utc))
 
 
-for _model in (User, DBSession, SessionParticipant, QueueTrack, PlaybackEvent):
+for _model in (
+    User,
+    DBSession,
+    SessionParticipant,
+    QueueTrack,
+    PlaybackEvent,
+    SessionCandidateTrack,
+):
     event.listen(_model, "before_insert", _fill_server_defaults)
 
 

@@ -40,7 +40,9 @@ async def register_user(db: AsyncSession, email: str, password: str) -> User:
     user = User(
         email=email,
         password_hash=hash_password(password),
-        platform="spotify",  # default platform until OAuth flow sets it
+        # Section 8: no platform is connected yet — leave it NULL rather than
+        # silently "impersonating" an empty Spotify account (the old default).
+        platform=None,
     )
     db.add(user)
     await db.commit()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -9,6 +9,8 @@ from app.schemas.schemas import (
     SessionResponse,
     UserResponse,
 )
+from app.services.connection_manager import manager
+from app.services.queue_optimizer import guest_joined
 from app.services.session_service import (
     close_session,
     create_session,
@@ -26,16 +28,28 @@ async def create(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await create_session(db, current_user, body.context_vector.model_dump())
+    return await create_session(
+        db,
+        current_user,
+        body.context_vector.model_dump(),
+        body.host_platform,
+        body.target_duration_minutes,
+    )
 
 
 @router.get("/sessions/{session_code}/join", response_model=JoinSessionResponse)
 async def join(
     session_code: str,
+    background_tasks: BackgroundTasks,
+    selected_platform: str = Query(...),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    participant = await join_session(db, session_code, current_user)
+    participant = await join_session(db, session_code, current_user, selected_platform)
+    # Section 5 — incremental candidate scan + merge for the new guest only.
+    background_tasks.add_task(
+        guest_joined, str(participant.session_id), str(participant.id), manager.broadcast
+    )
     return JoinSessionResponse(
         session_id=participant.session_id,
         joined_at=participant.joined_at,

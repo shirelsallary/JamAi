@@ -229,6 +229,127 @@ class SpotifyAdapter:
         cache.set(cache_key, result, RECOMMENDATIONS_TTL)
         return result
 
+    # ------------------------------------------------------------------
+    # Section 3 / 2.6 — playlist scanning, artist genres, search-based resolution
+    # ------------------------------------------------------------------
+
+    async def get_user_playlists(self, limit: int = 50) -> list:
+        """GET /me/playlists — the host/participant's own saved playlists (not top-tracks)."""
+        cache_key = f"user_playlists:{self.user_id}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        async with httpx.AsyncClient() as client:
+            async def _call():
+                r = await self._get(client, f"{_API}/me/playlists", params={"limit": limit})
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
+        result = [
+            {"playlist_id": item["id"], "name": item.get("name", "")}
+            for item in data.get("items", [])
+            if item
+        ]
+        cache.set(cache_key, result, TOP_TRACKS_TTL)
+        return result
+
+    async def get_playlist_tracks(self, playlist_id: str, limit: int = 100) -> list:
+        """GET /playlists/{id}/tracks — the actual saved tracks (Section 3, "not top-tracks!")."""
+        cache_key = f"playlist_tracks:{playlist_id}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        async with httpx.AsyncClient() as client:
+            async def _call():
+                r = await self._get(
+                    client, f"{_API}/playlists/{playlist_id}/tracks", params={"limit": limit}
+                )
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
+        result = []
+        for item in data.get("items", []):
+            track = item.get("track")
+            if not track or not track.get("id"):
+                continue
+            result.append({
+                "track_id": track["id"],
+                "title": track["name"],
+                "artist": track["artists"][0]["name"] if track["artists"] else "",
+                "artist_id": track["artists"][0]["id"] if track["artists"] else None,
+                "duration_ms": track["duration_ms"],
+            })
+        cache.set(cache_key, result, TOP_TRACKS_TTL)
+        return result
+
+    async def get_artists_genres(self, artist_ids: list[str]) -> dict[str, list[str]]:
+        """GET /artists?ids=... — batched, used to attach genres to playlist tracks
+        (Spotify track objects carry no genre field; genre lives on the artist)."""
+        artist_ids = [a for a in dict.fromkeys(artist_ids) if a]
+        if not artist_ids:
+            return {}
+        cache_key = f"artist_genres:{','.join(sorted(artist_ids))}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result: dict[str, list[str]] = {}
+        async with httpx.AsyncClient() as client:
+            for i in range(0, len(artist_ids), 50):  # Spotify caps /artists at 50 ids
+                batch = artist_ids[i : i + 50]
+
+                async def _call():
+                    r = await self._get(client, f"{_API}/artists", params={"ids": ",".join(batch)})
+                    r.raise_for_status()
+                    return r.json()
+
+                data = await with_retry(_call)
+                for artist in data.get("artists", []):
+                    if artist:
+                        result[artist["id"]] = artist.get("genres", [])
+        cache.set(cache_key, result, AUDIO_FEATURES_TTL)
+        return result
+
+    async def search_tracks(self, query: str, limit: int = 3) -> list:
+        """GET /search?type=track — used by Section 2.6 cross-platform resolution
+        and Section 4 public-playlist-search fallback."""
+        async with httpx.AsyncClient() as client:
+            async def _call():
+                r = await self._get(
+                    client,
+                    f"{_API}/search",
+                    params={"q": query, "type": "track", "limit": limit},
+                )
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
+        return [
+            {
+                "track_id": t["id"],
+                "title": t["name"],
+                "artist": t["artists"][0]["name"] if t["artists"] else "",
+                "duration_ms": t["duration_ms"],
+            }
+            for t in data.get("tracks", {}).get("items", [])
+        ]
+
+    async def search_playlists(self, query: str, limit: int = 5) -> list:
+        """GET /search?type=playlist — Section 4 chain_public_playlist_search."""
+        async with httpx.AsyncClient() as client:
+            async def _call():
+                r = await self._get(
+                    client,
+                    f"{_API}/search",
+                    params={"q": query, "type": "playlist", "limit": limit},
+                )
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
+        return [
+            {"playlist_id": p["id"], "name": p.get("name", "")}
+            for p in data.get("playlists", {}).get("items", [])
+            if p
+        ]
+
     async def add_to_queue(self, track_uri: str) -> None:
         async with httpx.AsyncClient() as client:
             async def _call():

@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -25,9 +26,12 @@ class User(Base):
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    platform: Mapped[str] = mapped_column(
+    # Nullable — a user has no platform connected until OAuth actually completes.
+    # Section 8: previously defaulted to "spotify", which let a user "impersonate"
+    # an empty Spotify account. NULL now means "nothing connected".
+    platform: Mapped[str | None] = mapped_column(
         String(20),
-        nullable=False,
+        nullable=True,
         info={"check": "platform IN ('spotify', 'youtube')"},
     )
     platform_token: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
@@ -37,7 +41,10 @@ class User(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("platform IN ('spotify', 'youtube')", name="users_platform_check"),
+        CheckConstraint(
+            "platform IS NULL OR platform IN ('spotify', 'youtube')",
+            name="users_platform_check",
+        ),
     )
 
     hosted_sessions: Mapped[list["Session"]] = relationship(
@@ -68,6 +75,21 @@ class Session(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="pending"
     )
+    # Section 0 — chosen explicitly by the host at creation from their own
+    # connected platform(s); determines which Adapter actually controls playback.
+    host_platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Section 1 — SessionDNA, derived once from context_vector at creation time
+    # and reused everywhere downstream (never recomputed per-run).
+    session_dna: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # Section 4/7 — "full" | "partial" | "empty"
+    queue_build_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="empty"
+    )
+    # Section 4/7 — the lowest rung of THRESHOLD_LADDER actually reached when
+    # the queue was last (re)built.
+    effective_threshold: Mapped[float | None] = mapped_column(Numeric(4, 2), nullable=True)
+    # Section 0 (duration field added to CreateSessionScreen) — feeds target_queue_size().
+    target_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -76,6 +98,13 @@ class Session(Base):
     __table_args__ = (
         CheckConstraint(
             "status IN ('pending', 'active', 'closed')", name="sessions_status_check"
+        ),
+        CheckConstraint(
+            "host_platform IN ('spotify', 'youtube')", name="sessions_host_platform_check"
+        ),
+        CheckConstraint(
+            "queue_build_status IN ('full', 'partial', 'empty')",
+            name="sessions_queue_build_status_check",
         ),
     )
 
@@ -88,6 +117,9 @@ class Session(Base):
     )
     playback_events: Mapped[list["PlaybackEvent"]] = relationship(
         "PlaybackEvent", back_populates="session"
+    )
+    candidate_tracks: Mapped[list["SessionCandidateTrack"]] = relationship(
+        "SessionCandidateTrack", back_populates="session"
     )
 
 
@@ -103,12 +135,19 @@ class SessionParticipant(Base):
     user_id: Mapped[UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    # Section 0 — chosen at join time from this participant's own connected
+    # platform; independent of host_platform (guests only contribute scan data).
+    selected_platform: Mapped[str] = mapped_column(String(20), nullable=False)
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
         UniqueConstraint("session_id", "user_id", name="uq_session_participant"),
+        CheckConstraint(
+            "selected_platform IN ('spotify', 'youtube')",
+            name="session_participants_selected_platform_check",
+        ),
     )
 
     session: Mapped["Session"] = relationship("Session", back_populates="participants")
@@ -133,6 +172,14 @@ class QueueTrack(Base):
         Numeric(5, 4), nullable=False, server_default="0.0"
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Section 2 — "high" (real audio features) or "low" (YouTube approximation).
+    confidence: Mapped[str] = mapped_column(String(10), nullable=False, server_default="high")
+    # Section 2.5 — computed once when the candidate pool is built, never
+    # recomputed on every re-rank/skip.
+    playlist_overlap_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    shared_artist_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Section 6 — protects the track actually playing from being displaced by a re-rank.
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -142,6 +189,7 @@ class QueueTrack(Base):
             "platform IN ('spotify', 'youtube')", name="queue_tracks_platform_check"
         ),
         CheckConstraint("duration_ms > 0", name="queue_tracks_duration_check"),
+        CheckConstraint("confidence IN ('high', 'low')", name="queue_tracks_confidence_check"),
     )
 
     session: Mapped["Session"] = relationship("Session", back_populates="queue_tracks")
@@ -189,3 +237,61 @@ class PlaybackEvent(Base):
         "QueueTrack", back_populates="playback_events"
     )
     user: Mapped["User"] = relationship("User", back_populates="playback_events")
+
+
+class SessionCandidateTrack(Base):
+    """
+    Section 5 — the full ranked candidate pool (including tracks that never
+    passed the match threshold), cached so that:
+      - skip (Section 6) can re-rank without any external API calls.
+      - a new guest join (Section 5) can be merged in without re-scanning
+        participants who were already scanned.
+    """
+
+    __tablename__ = "session_candidate_tracks"
+
+    id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    session_id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    # Which participant's scan produced this candidate — needed so a guest's
+    # own contribution can be targeted for incremental overlap updates.
+    participant_id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("session_participants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    track_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    artist: Mapped[str] = mapped_column(String(255), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    valence: Mapped[float | None] = mapped_column(Numeric(4, 3), nullable=True)
+    energy: Mapped[float | None] = mapped_column(Numeric(4, 3), nullable=True)
+    genres: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    normalized_track_key: Mapped[str] = mapped_column(String(511), nullable=False)
+    normalized_artist_key: Mapped[str] = mapped_column(String(511), nullable=False)
+    match_score: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
+    confidence: Mapped[str] = mapped_column(String(10), nullable=False)
+    playlist_overlap_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    shared_artist_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "source_platform IN ('spotify', 'youtube')",
+            name="session_candidate_tracks_platform_check",
+        ),
+        CheckConstraint(
+            "confidence IN ('high', 'low')", name="session_candidate_tracks_confidence_check"
+        ),
+        UniqueConstraint(
+            "session_id", "participant_id", "track_id", name="uq_candidate_participant_track"
+        ),
+    )
+
+    session: Mapped["Session"] = relationship("Session", back_populates="candidate_tracks")

@@ -70,6 +70,65 @@ class YouTubeAdapter:
             })
         return result
 
+    # ------------------------------------------------------------------
+    # Section 3 / 2.6 — playlist scanning, search-based resolution
+    # ------------------------------------------------------------------
+
+    async def get_user_playlists(self, limit: int = 50) -> list:
+        """ytmusicapi.get_library_playlists() — the user's own saved playlists."""
+        cache_key = f"yt_user_playlists:{self.user_id}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        items = await with_retry(lambda: _run_sync(self.yt.get_library_playlists, limit=limit))
+        result = [
+            {"playlist_id": item.get("playlistId", ""), "name": item.get("title", "")}
+            for item in (items or [])
+            if item.get("playlistId")
+        ]
+        cache.set(cache_key, result, TOP_TRACKS_TTL)
+        return result
+
+    async def get_playlist_tracks(self, playlist_id: str, limit: int = 100) -> list:
+        """ytmusicapi.get_playlist(playlist_id) — the actual saved tracks."""
+        cache_key = f"yt_playlist_tracks:{playlist_id}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        data = await with_retry(
+            lambda: _run_sync(self.yt.get_playlist, playlist_id, limit=limit)
+        )
+        result = []
+        for item in (data or {}).get("tracks", []):
+            if not item.get("videoId"):
+                continue
+            artists = item.get("artists") or []
+            result.append({
+                "track_id": item["videoId"],
+                "title": item.get("title", ""),
+                "artist": artists[0]["name"] if artists else "",
+                "artist_id": None,  # ytmusicapi doesn't expose stable artist-genre data
+                "duration_ms": _duration_to_ms(item.get("duration")),
+            })
+        cache.set(cache_key, result, TOP_TRACKS_TTL)
+        return result
+
+    async def get_artists_genres(self, artist_ids: list[str]) -> dict[str, list[str]]:
+        """No genre taxonomy available via ytmusicapi — always empty (Section 2's
+        'no audio features' low-confidence path also covers the empty-genre case)."""
+        return {}
+
+    async def search_playlists(self, query: str, limit: int = 5) -> list:
+        """ytmusicapi.search(filter='playlists') — Section 4 chain_public_playlist_search."""
+        items = await with_retry(
+            lambda: _run_sync(self.yt.search, query, filter="playlists", limit=limit)
+        )
+        return [
+            {"playlist_id": item.get("browseId", ""), "name": item.get("title", "")}
+            for item in (items or [])
+            if item.get("browseId")
+        ]
+
     async def search_tracks(self, query: str, limit: int = 20) -> list:
         items = await with_retry(
             lambda: _run_sync(self.yt.search, query, filter="songs", limit=limit)

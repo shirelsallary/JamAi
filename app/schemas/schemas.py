@@ -29,7 +29,7 @@ class UserLogin(BaseModel):
 class UserResponse(BaseModel):
     id: UUID
     email: str
-    platform: str
+    platform: Optional[str] = None
     platform_token: str = ""
     created_at: datetime
 
@@ -58,6 +58,25 @@ class ContextVector(BaseModel):
 
 class SessionCreate(BaseModel):
     context_vector: ContextVector
+    # Section 0 — must be one of the host's own connected platforms (validated
+    # server-side against users.platform, not trusted blindly from the client).
+    host_platform: str
+    # Section 0 (duration field added to CreateSessionScreen) — feeds target_queue_size().
+    target_duration_minutes: Optional[int] = None
+
+    @field_validator("host_platform")
+    @classmethod
+    def host_platform_valid(cls, v: str) -> str:
+        if v not in ("spotify", "youtube"):
+            raise ValueError("host_platform must be 'spotify' or 'youtube'")
+        return v
+
+    @field_validator("target_duration_minutes")
+    @classmethod
+    def duration_positive(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("target_duration_minutes must be greater than 0")
+        return v
 
 
 class SessionResponse(BaseModel):
@@ -66,6 +85,10 @@ class SessionResponse(BaseModel):
     qr_payload: str
     status: str
     context_vector: dict
+    host_platform: str
+    queue_build_status: str
+    effective_threshold: Optional[float] = None
+    target_duration_minutes: Optional[int] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -88,9 +111,20 @@ class QueueTrackResponse(BaseModel):
     artist: str
     duration_ms: int
     weight_score: float
+    confidence: str
+    playlist_overlap_count: int
+    shared_artist_count: int
     position: int
 
     model_config = {"from_attributes": True}
+
+
+class QueueResponse(BaseModel):
+    """Section 7 — user-facing transparency: never a silent empty screen."""
+
+    tracks: list[QueueTrackResponse]
+    queue_build_status: str
+    effective_threshold: Optional[float] = None
 
 
 class SkipRequest(BaseModel):

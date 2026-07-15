@@ -5,35 +5,59 @@ from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.platform_factory import get_platform_adapter
+from app.adapters.platform_factory import NoPlatformConnectedError, get_platform_adapter
 from app.adapters.spotify_adapter import SpotifyAdapter
 from app.models.models import PlaybackEvent, QueueTrack, Session, SessionParticipant, User
-from app.services.queue_optimizer import build_scored_recommendations
+from app.services.queue_dna_engine import scan_saved_playlists, score_candidates
+from app.services.session_dna import load_or_build_session_dna
 
 
 async def generate_playlist(
     session_id: str, duration_minutes: int, db: AsyncSession
 ) -> list[QueueTrack]:
+    """
+    Standalone "generate a playlist for N minutes" utility — not part of the
+    live JAM queue-building flow (see queue_optimizer.py for that). Not
+    referenced by SPEC.md; rewritten only so it keeps working (it previously
+    called build_scored_recommendations, which SPEC.md's Section 4 explicitly
+    replaces rather than extends) using the same DNA-scored candidates now
+    instead of the old top-tracks-based scoring.
+    """
+    session = await db.get(Session, UUID(session_id))
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
     result = await db.execute(
-        select(User)
-        .join(SessionParticipant, SessionParticipant.user_id == User.id)
+        select(SessionParticipant, User)
+        .join(User, User.id == SessionParticipant.user_id)
         .where(SessionParticipant.session_id == UUID(session_id))
     )
-    participants = list(result.scalars().all())
+    participants = result.all()
 
-    scored = await build_scored_recommendations(participants)
+    dna = load_or_build_session_dna(session)
+    scored: list[dict] = []
+    for participant, user in participants:
+        try:
+            tracks, _playlists = await scan_saved_playlists(user, participant.selected_platform)
+        except NoPlatformConnectedError:
+            continue
+        except Exception:
+            continue
+        scored.extend(score_candidates(tracks, dna))
+
+    scored.sort(key=lambda t: t["match_score"], reverse=True)
 
     # Greedy fill: add highest-scored tracks until duration is reached
     total_ms = duration_minutes * 60 * 1000
-    selected: list[tuple[dict, float, str]] = []
+    selected: list[dict] = []
     accumulated_ms = 0
 
-    for track, score, platform in scored:
+    for track in scored:
         duration = track.get("duration_ms", 0)
         if duration <= 0:
             continue
         if accumulated_ms + duration <= total_ms:
-            selected.append((track, score, platform))
+            selected.append(track)
             accumulated_ms += duration
         if accumulated_ms >= total_ms:
             break
@@ -43,15 +67,16 @@ async def generate_playlist(
     )
 
     db_tracks: list[QueueTrack] = []
-    for position, (track, score, platform) in enumerate(selected):
+    for position, track in enumerate(selected):
         qt = QueueTrack(
             session_id=UUID(session_id),
             track_id=track["track_id"],
-            platform=platform,
+            platform=track["platform"],
             title=track.get("title", "Unknown"),
             artist=track.get("artist", "Unknown"),
             duration_ms=max(1, track.get("duration_ms", 1)),
-            weight_score=round(score, 4),
+            weight_score=round(track["match_score"], 4),
+            confidence=track.get("confidence", "high"),
             position=position,
         )
         db.add(qt)

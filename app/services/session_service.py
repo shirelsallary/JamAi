@@ -8,6 +8,17 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Session, SessionParticipant, User
+from app.services.session_dna import build_session_dna
+
+
+def _assert_platform_connected(user: User, platform: str) -> None:
+    """Section 0 — the platform chosen for this session/join must be one the
+    user has actually connected (has a non-empty token for), not merely typed."""
+    if user.platform != platform or not user.platform_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Connect {platform} first",
+        )
 
 
 async def generate_session_code(db: AsyncSession) -> str:
@@ -22,8 +33,14 @@ async def generate_session_code(db: AsyncSession) -> str:
 
 
 async def create_session(
-    db: AsyncSession, host_user: User, context_vector: dict
+    db: AsyncSession,
+    host_user: User,
+    context_vector: dict,
+    host_platform: str,
+    target_duration_minutes: int | None = None,
 ) -> Session:
+    _assert_platform_connected(host_user, host_platform)
+
     code = await generate_session_code(db)
     qr_payload = f"jamai://join/{code}"
 
@@ -32,6 +49,9 @@ async def create_session(
         session_code=code,
         qr_payload=qr_payload,
         context_vector=context_vector,
+        host_platform=host_platform,
+        session_dna=build_session_dna(context_vector),
+        target_duration_minutes=target_duration_minutes,
         status="pending",
     )
     db.add(session)
@@ -40,6 +60,7 @@ async def create_session(
     participant = SessionParticipant(
         session_id=session.id,
         user_id=host_user.id,
+        selected_platform=host_platform,
     )
     db.add(participant)
 
@@ -54,8 +75,10 @@ async def create_session(
 
 
 async def join_session(
-    db: AsyncSession, session_code: str, guest_user: User
+    db: AsyncSession, session_code: str, guest_user: User, selected_platform: str
 ) -> SessionParticipant:
+    _assert_platform_connected(guest_user, selected_platform)
+
     result = await db.execute(
         select(Session).where(Session.session_code == session_code)
     )
@@ -84,9 +107,11 @@ async def join_session(
             detail="Already in session",
         )
 
+    # Section 0 — no requirement that selected_platform == session.host_platform.
     participant = SessionParticipant(
         session_id=session.id,
         user_id=guest_user.id,
+        selected_platform=selected_platform,
     )
     db.add(participant)
     await db.commit()

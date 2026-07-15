@@ -137,3 +137,4 @@ FR-1 ✅ &nbsp; FR-2 ✅ &nbsp; FR-3 ✅ &nbsp; FR-4 ✅ &nbsp; FR-5 ✅ &nbsp; 
 - YouTube Music uses the unofficial `ytmusicapi` library (no official API exists)
 - In-memory cache resets on server restart (Redis planned for v2)
 - Optimal performance tested up to 10 users per session
+- Social-overlap credit for a guest who joins after the initial queue build is one-sided: their newly-scanned tracks are only checked for overlap against their *own* playlists, not against earlier participants' — see the comment on `attach_social_overlap` in `on_guest_joined` (`app/services/queue_dna_engine.py`) for the fix options considered

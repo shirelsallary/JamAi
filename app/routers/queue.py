@@ -7,15 +7,15 @@ from jose import JWTError, jwt
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.platform_factory import get_platform_adapter
+from app.adapters.platform_factory import NoPlatformConnectedError, get_platform_adapter
 from app.config import settings
 from app.database import get_db
 from app.models.models import PlaybackEvent, QueueTrack, Session
 from app.routers.auth import get_current_user
-from app.schemas.schemas import QueueTrackResponse, SkipRequest
+from app.schemas.schemas import QueueResponse, QueueTrackResponse, SkipRequest
 from app.services.connection_manager import manager
 from app.services.debounce_service import debouncer
-from app.services.queue_optimizer import optimize_queue
+from app.services.queue_optimizer import optimize_queue, rerank_queue
 from app.services.session_buffer import session_buffer
 
 router = APIRouter()
@@ -72,6 +72,7 @@ async def skip(
         .limit(1)
     )
     current_track = result.scalar_one_or_none()
+    skipped_track_id = str(current_track.id) if current_track else None
 
     if current_track:
         db.add(PlaybackEvent(
@@ -92,28 +93,44 @@ async def skip(
 
         await db.commit()
 
-    background_tasks.add_task(optimize_queue, session_id, manager.broadcast)
+    # Section 6 — re-rank ONLY from the stored candidate pool, no adapter/API
+    # calls (this is what previously failed NFR-1 / TC-7 by hitting Spotify/
+    # YouTube on every skip).
+    background_tasks.add_task(rerank_queue, session_id, manager.broadcast, skipped_track_id)
     return {"message": "skip recorded, queue updating"}
 
 
-@router.get("/queue/{session_id}")
+@router.get("/queue/{session_id}", response_model=QueueResponse)
 async def get_queue(
     session_id: str,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        session = await db.get(Session, UUID(session_id))
         result = await db.execute(
             select(QueueTrack)
             .where(QueueTrack.session_id == UUID(session_id))
             .order_by(QueueTrack.position.asc())
         )
         tracks = list(result.scalars().all())
-        serialized = [
+        serialized_tracks = [
             QueueTrackResponse.model_validate(t).model_dump(mode="json") for t in tracks
         ]
-        session_buffer.save(session_id, serialized)
-        return JSONResponse(content=serialized)
+        payload = {
+            "tracks": serialized_tracks,
+            # Section 7 — never a silent empty screen: the frontend can tell
+            # "nothing found yet" apart from "found fewer than requested" apart
+            # from "fully satisfied".
+            "queue_build_status": session.queue_build_status if session else "empty",
+            "effective_threshold": (
+                float(session.effective_threshold)
+                if session and session.effective_threshold is not None
+                else None
+            ),
+        }
+        session_buffer.save(session_id, payload)
+        return JSONResponse(content=payload)
 
     except Exception:
         buffered = session_buffer.get(session_id)
@@ -149,7 +166,12 @@ async def reconnect_session(
     try:
         adapter = get_platform_adapter(current_user)
         await adapter.get_current_playback()
-        background_tasks.add_task(optimize_queue, session_id, manager.broadcast)
+        # A light re-rank (no external calls) rather than a full rescan — a
+        # reconnect shouldn't re-trigger Section 3's playlist scan/Section 4's
+        # public search chaining, only refresh what's already known.
+        background_tasks.add_task(rerank_queue, session_id, manager.broadcast, None)
         return {"status": "reconnected"}
+    except NoPlatformConnectedError:
+        return {"status": "failed", "retry_after": 30}
     except Exception:
         return {"status": "failed", "retry_after": 30}

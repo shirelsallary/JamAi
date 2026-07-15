@@ -1,3 +1,17 @@
-from app.models.models import User, Session, SessionParticipant, QueueTrack, PlaybackEvent
+from app.models.models import (
+    PlaybackEvent,
+    QueueTrack,
+    Session,
+    SessionCandidateTrack,
+    SessionParticipant,
+    User,
+)
 
-__all__ = ["User", "Session", "SessionParticipant", "QueueTrack", "PlaybackEvent"]
+__all__ = [
+    "User",
+    "Session",
+    "SessionParticipant",
+    "QueueTrack",
+    "PlaybackEvent",
+    "SessionCandidateTrack",
+]
