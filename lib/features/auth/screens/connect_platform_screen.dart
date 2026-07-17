@@ -1,5 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
@@ -17,7 +21,97 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   bool _showVerifyButton = false;
   String? _error;
 
-  Future<void> _connectPlatform(String platform) async {
+  AppLinks? _appLinks;
+  StreamSubscription<Uri>? _linkSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    // Bug 2 fix — listen for the jamai://spotify-callback deep link Spotify
+    // redirects to after the user approves in the external browser. Wrapped
+    // defensively: platforms/environments without deep-link channel support
+    // (e.g. widget tests, or a desktop target with no plugin registered)
+    // must not crash the screen — Spotify connect still works via the
+    // "Already connected? Refresh" manual fallback in that case.
+    //
+    // KNOWN GAP (deferred by product decision, not forgotten): this only
+    // catches the deep link while ConnectPlatformScreen is already mounted
+    // (uriLinkStream, a "warm" listener). If the OS kills/backgrounds the app
+    // while the user is in Spotify's browser and the deep link arrives to a
+    // freshly cold-started app instance, this listener isn't attached yet and
+    // the redirect is silently missed — the same failure mode Bug 2 fixed for
+    // the general case, just narrowed to cold start. app_links' getInitialLink()
+    // is the fix for that (check it once at app startup, not just this
+    // screen), not implemented here. The manual "Already connected? Refresh"
+    // fallback below is the stopgap until that's built.
+    try {
+      _appLinks = AppLinks();
+      _linkSubscription = _appLinks!.uriLinkStream.listen(
+        _handleDeepLink,
+        onError: (_) {},
+      );
+    } catch (_) {
+      // no deep-link support on this platform — manual fallback still works
+    }
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _handleDeepLink(Uri uri) async {
+    if (uri.scheme != 'jamai' || uri.host != 'spotify-callback') return;
+
+    final error = uri.queryParameters['error'];
+    if (error != null) {
+      if (mounted) {
+        setState(() => _error = 'Spotify connection was cancelled or denied.');
+      }
+      return;
+    }
+
+    final code = uri.queryParameters['code'];
+    final state = uri.queryParameters['state'];
+    if (code == null || state == null) return;
+
+    setState(() {
+      _isConnecting = true;
+      _error = null;
+    });
+
+    try {
+      final token = await AuthService.getToken();
+      if (token == null) {
+        if (mounted) context.go('/');
+        return;
+      }
+
+      final response = await http.post(
+        Uri.parse('$kBaseUrl/auth/oauth/spotify/exchange'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'code': code, 'state': state}),
+      );
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        // Success path — no manual "I connected my account" tap needed.
+        context.go('/home');
+      } else {
+        setState(() => _error = 'Could not complete Spotify connection. Try again.');
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Connection failed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _isConnecting = false);
+    }
+  }
+
+  Future<void> _connectSpotify() async {
     final token = await AuthService.getToken();
     if (!mounted) return;
     if (token == null) {
@@ -27,11 +121,24 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
 
     setState(() => _isConnecting = true);
 
-    final uri = Uri.parse('$kBaseUrl/auth/oauth/$platform');
-
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      // Bug 2 fix — this call is authenticated (normal Bearer header, made
+      // from inside the app) and only returns the authorize URL; the JWT
+      // itself never reaches the external browser.
+      final response = await http.get(
+        Uri.parse('$kBaseUrl/auth/oauth/spotify'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (!mounted) return;
+      if (response.statusCode != 200) {
+        throw Exception('Failed to start Spotify connection');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final authorizeUrl = Uri.parse(data['authorize_url'] as String);
+
+      if (await canLaunchUrl(authorizeUrl)) {
+        await launchUrl(authorizeUrl, mode: LaunchMode.externalApplication);
         if (!mounted) return;
         setState(() {
           _isConnecting = false;
@@ -45,10 +152,7 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
       setState(() => _isConnecting = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Opening browser failed on this device. '
-            'This works automatically on Android.',
-          ),
+          content: Text('Could not open Spotify. Please try again.'),
           backgroundColor: kRed,
           duration: Duration(seconds: 4),
         ),
@@ -56,26 +160,10 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
     }
   }
 
-  void _showYoutubeUnsupportedDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('YouTube Music'),
-        content: const Text(
-          'YouTube Music connection requires the Android version of the app. '
-          'On desktop, you can continue with Spotify instead.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _verifyAndContinue() async {
+    // Manual fallback only (per Bug 2 fix) — the deep-link handler above is
+    // the primary success path. Kept in case the OS fails to deliver the
+    // deep link back to the app (device quirk / user backgrounded the app).
     setState(() {
       _isConnecting = true;
       _error = null;
@@ -142,15 +230,21 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
               ),
               const SizedBox(height: 48),
               _PlatformConnectButton(
+                key: const Key('connect-spotify-button'),
                 label: 'Connect Spotify',
                 color: kGreen,
-                onTap: _isConnecting ? null : () => _connectPlatform('spotify'),
+                onTap: _isConnecting ? null : _connectSpotify,
               ),
               const SizedBox(height: 16),
               _PlatformConnectButton(
+                key: const Key('connect-youtube-button'),
                 label: 'Connect YouTube Music',
                 color: kRed,
-                onTap: _isConnecting ? null : _showYoutubeUnsupportedDialog,
+                // Bug 2 fix — used to show a blocking "unsupported" dialog
+                // even though YouTubeWebViewScreen already exists and works;
+                // it was simply unreachable. push (not go) so the back
+                // button on YouTubeWebViewScreen has somewhere to return to.
+                onTap: _isConnecting ? null : () => context.push('/youtube-connect'),
               ),
               const SizedBox(height: 24),
               if (_error != null)
@@ -174,7 +268,7 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
                             color: Colors.white,
                           ),
                         )
-                      : const Text('I connected my account'),
+                      : const Text('Already connected? Refresh'),
                 ),
               TextButton(
                 onPressed: () => context.go('/home'),
@@ -198,6 +292,7 @@ class _PlatformConnectButton extends StatelessWidget {
   final VoidCallback? onTap;
 
   const _PlatformConnectButton({
+    super.key,
     required this.label,
     required this.color,
     required this.onTap,

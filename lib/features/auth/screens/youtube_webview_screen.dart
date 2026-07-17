@@ -95,7 +95,9 @@ class _YouTubeWebViewScreenState extends State<YouTubeWebViewScreen> {
         foregroundColor: Colors.white,
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => context.go('/connect-platform'),
+          // pop (not go) — this screen is only ever reached by pushing from
+          // ConnectPlatformScreen, so it's already on the stack.
+          onPressed: () => context.pop(),
         ),
       ),
       body: Stack(

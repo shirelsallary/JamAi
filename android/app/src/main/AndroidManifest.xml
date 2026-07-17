@@ -25,6 +25,20 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Bug 2 fix: jamai:// deep links — used for the Spotify OAuth
+                 callback (jamai://spotify-callback?code=...&state=...) so the
+                 app can intercept Spotify's redirect instead of it going
+                 nowhere. Also covers the pre-existing jamai://join/{code} QR
+                 payload (app/services/session_service.py), which — separately
+                 from this fix, noted but not touched — had no matching
+                 intent-filter either, so QR-code joining doesn't deep-link
+                 into the app today. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="jamai"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
