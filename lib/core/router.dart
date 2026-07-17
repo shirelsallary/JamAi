@@ -70,7 +70,10 @@ final GoRouter appRouter = GoRouter(
     ),
     GoRoute(
       path: '/session/join',
-      pageBuilder: (context, state) => _slidePage(const JoinSessionScreen()),
+      // ?code=... populated when reached via a jamai://join/{code} deep link.
+      pageBuilder: (context, state) => _slidePage(
+        JoinSessionScreen(initialCode: state.uri.queryParameters['code']),
+      ),
     ),
     GoRoute(
       path: '/session/:id',

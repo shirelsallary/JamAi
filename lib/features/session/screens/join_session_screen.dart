@@ -7,13 +7,18 @@ import '../../../core/constants.dart';
 import '../../../core/theme.dart';
 
 class JoinSessionScreen extends StatefulWidget {
-  const JoinSessionScreen({super.key});
+  // Populated when this screen is reached via a jamai://join/{code} deep
+  // link (QR code scan or shared link) — see main.dart's deep-link listener.
+  final String? initialCode;
+
+  const JoinSessionScreen({super.key, this.initialCode});
 
   @override
   State<JoinSessionScreen> createState() => _JoinSessionScreenState();
 }
 
 class _JoinSessionScreenState extends State<JoinSessionScreen> {
+  late final TextEditingController _codeController;
   String _code = '';
   bool _isLoading = false;
   String? _error;
@@ -26,7 +31,16 @@ class _JoinSessionScreenState extends State<JoinSessionScreen> {
   @override
   void initState() {
     super.initState();
+    final prefill = widget.initialCode?.toUpperCase() ?? '';
+    _code = prefill;
+    _codeController = TextEditingController(text: prefill);
     _loadSelectedPlatform();
+  }
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSelectedPlatform() async {
@@ -127,6 +141,7 @@ class _JoinSessionScreenState extends State<JoinSessionScreen> {
                   ),
                   const SizedBox(height: 32),
                   TextField(
+                    controller: _codeController,
                     maxLength: 6,
                     textAlign: TextAlign.center,
                     textCapitalization: TextCapitalization.characters,
