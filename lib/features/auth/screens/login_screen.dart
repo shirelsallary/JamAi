@@ -129,7 +129,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   const Text('New here?', style: TextStyle(color: kTextSecondary)),
                   TextButton(
-                    onPressed: () => context.go('/register'),
+                    // push (not go) — Register should have a working back
+                    // button to return here, per the navigation audit.
+                    onPressed: () => context.push('/register'),
                     child: const Text('Create account →'),
                   ),
                 ],

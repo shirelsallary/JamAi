@@ -81,7 +81,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.add),
                     label: const Text('Create JAM'),
-                    onPressed: () => context.go('/session/create'),
+                    // push — user should be able to back out of the create
+                    // form to Home (see navigation audit).
+                    onPressed: () => context.push('/session/create'),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -97,7 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       minimumSize: const Size(double.infinity, 48),
                     ),
-                    onPressed: () => context.go('/session/join'),
+                    onPressed: () => context.push('/session/join'),
                   ),
                 ),
               ],
@@ -160,8 +162,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
         onTap: (index) {
           if (index == 0) setState(() => _currentIndex = 0);
-          if (index == 1) context.go('/session/create');
-          if (index == 2) context.go('/session/join');
+          if (index == 1) context.push('/session/create');
+          if (index == 2) context.push('/session/join');
         },
       ),
     );
@@ -184,7 +186,10 @@ class _SessionCard extends StatelessWidget {
     final subtitle = [genre, mood].where((s) => s.isNotEmpty).join(' · ');
 
     return GestureDetector(
-      onTap: () => context.go('/session/${session['id']}'),
+      // push — drilling into a past/active session from the history list
+      // should be back-able to Home, unlike landing there right after
+      // creating/joining (see navigation audit).
+      onTap: () => context.push('/session/${session['id']}'),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(

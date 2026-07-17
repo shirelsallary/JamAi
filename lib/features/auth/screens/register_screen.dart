@@ -206,7 +206,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     : const Text('Register'),
               ),
               TextButton(
-                onPressed: () => context.go('/'),
+                // pop (not go) — RegisterScreen is only ever reached by
+                // pushing from LoginScreen, so Login is already on the stack.
+                onPressed: () => context.pop(),
                 child: const Text('Already have an account? Login'),
               ),
             ],
