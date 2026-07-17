@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
 import '../../../core/theme.dart';
@@ -11,6 +10,7 @@ const _genres = ['Pop', 'Hip-Hop', 'Rock', 'Jazz', 'R&B', 'Latin', 'Electronic',
 const _moods = ['Energetic', 'Chill', 'Happy', 'Sad', 'Romantic', 'Focus'];
 const _languages = ['English', 'Hebrew', 'Spanish', 'Arabic', 'French'];
 const _times = ['Morning', 'Afternoon', 'Evening', 'Night', 'Late Night'];
+const _durations = [30, 60, 90, 120];
 
 class CreateSessionScreen extends StatefulWidget {
   const CreateSessionScreen({super.key});
@@ -20,18 +20,45 @@ class CreateSessionScreen extends StatefulWidget {
 }
 
 class _CreateSessionScreenState extends State<CreateSessionScreen> {
-  String? _selectedPlatform;
   String? _selectedGenre;
   String? _selectedMood;
   String? _selectedLanguage;
   String? _selectedTime;
-  String? _customGenre;
-  String? _customMood;
-  String? _customLanguage;
-  String? _customTime;
+  int _selectedDuration = 60;
   bool _isLoading = false;
 
-  bool get _canCreate => !_isLoading && _selectedPlatform != null;
+  // Section 0 — the host's own connected platform, auto-selected (single
+  // platform per account today; see project notes). Not user-choosable here
+  // because there is at most one to choose from.
+  bool _loadingPlatform = true;
+  String? _hostPlatform;
+
+  bool get _canCreate => !_isLoading && _hostPlatform != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHostPlatform();
+  }
+
+  Future<void> _loadHostPlatform() async {
+    final token = await AuthService.getToken();
+    if (!mounted) return;
+    if (token == null) {
+      context.go('/');
+      return;
+    }
+    final me = await AuthService.getMe(token);
+    if (!mounted) return;
+    final platform = me?['platform'] as String?;
+    final platformToken = me?['platform_token'] as String?;
+    setState(() {
+      _hostPlatform = (platform != null && platformToken != null && platformToken.isNotEmpty)
+          ? platform
+          : null;
+      _loadingPlatform = false;
+    });
+  }
 
   Future<void> _createSession() async {
     final token = await AuthService.getToken();
@@ -39,13 +66,9 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
       if (mounted) context.go('/');
       return;
     }
+    if (_hostPlatform == null) return;
 
     setState(() => _isLoading = true);
-
-    final genre = _customGenre ?? _selectedGenre;
-    final mood = _customMood ?? _selectedMood;
-    final language = _customLanguage ?? _selectedLanguage;
-    final time = _customTime ?? _selectedTime;
 
     try {
       final response = await http.post(
@@ -56,22 +79,19 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
         },
         body: jsonEncode({
           'context_vector': {
-            'genre': genre,
-            'mood': mood,
-            'language': language,
-            'time': time,
-          }
+            'genre': _selectedGenre,
+            'mood': _selectedMood,
+            'language': _selectedLanguage,
+            'time': _selectedTime,
+          },
+          'host_platform': _hostPlatform,
+          'target_duration_minutes': _selectedDuration,
         }),
       );
       if (!mounted) return;
 
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        if (_selectedPlatform != null) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('platform', _selectedPlatform!);
-        }
-        if (!mounted) return;
         context.go('/session/${data['id']}');
       } else {
         _showError('Failed to create session. Please try again.');
@@ -102,178 +122,190 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
               )
             : null,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // --- Platform selection ---
-            const Text(
-              'Choose your platform',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _PlatformButton(
-                    label: 'Spotify',
-                    color: kGreen,
-                    isSelected: _selectedPlatform == 'spotify',
-                    onTap: () => setState(() => _selectedPlatform = 'spotify'),
+      body: _loadingPlatform
+          ? const Center(child: CircularProgressIndicator(color: kPrimary))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // --- Platform (auto-selected, read-only display) ---
+                  const Text(
+                    'Playing via',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _PlatformButton(
-                    label: 'YouTube Music',
-                    color: kRed,
-                    isSelected: _selectedPlatform == 'youtube',
-                    onTap: () => setState(() => _selectedPlatform = 'youtube'),
+                  const SizedBox(height: 12),
+                  if (_hostPlatform != null)
+                    _PlatformBadge(platform: _hostPlatform!)
+                  else
+                    _NoPlatformConnectedBanner(
+                      onConnect: () => context.push('/connect-platform'),
+                    ),
+                  const SizedBox(height: 28),
+
+                  // --- Duration ---
+                  const Text(
+                    'Target duration',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 28),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    children: _durations
+                        .map((d) => _TagChip(
+                              label: '$d min',
+                              isSelected: _selectedDuration == d,
+                              onTap: () => setState(() => _selectedDuration = d),
+                            ))
+                        .toList(),
+                  ),
+                  const SizedBox(height: 28),
 
-            // --- Genre ---
-            _TagSection(
-              label: 'Genre',
-              options: _genres,
-              selected: _selectedGenre,
-              onSelect: (v) => setState(() => _selectedGenre = v),
-              customValue: _customGenre,
-              onCustomChanged: (v) => setState(() => _customGenre = v),
-            ),
-            const SizedBox(height: 20),
+                  // --- Genre ---
+                  _TagSection(
+                    label: 'Genre',
+                    options: _genres,
+                    selected: _selectedGenre,
+                    onSelect: (v) => setState(
+                      () => _selectedGenre = _selectedGenre == v ? null : v,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
 
-            // --- Mood ---
-            _TagSection(
-              label: 'Mood',
-              options: _moods,
-              selected: _selectedMood,
-              onSelect: (v) => setState(() => _selectedMood = v),
-              customValue: _customMood,
-              onCustomChanged: (v) => setState(() => _customMood = v),
-            ),
-            const SizedBox(height: 20),
+                  // --- Mood ---
+                  _TagSection(
+                    label: 'Mood',
+                    options: _moods,
+                    selected: _selectedMood,
+                    onSelect: (v) => setState(
+                      () => _selectedMood = _selectedMood == v ? null : v,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
 
-            // --- Language ---
-            _TagSection(
-              label: 'Language',
-              options: _languages,
-              selected: _selectedLanguage,
-              onSelect: (v) => setState(() => _selectedLanguage = v),
-              customValue: _customLanguage,
-              onCustomChanged: (v) => setState(() => _customLanguage = v),
-            ),
-            const SizedBox(height: 20),
+                  // --- Language ---
+                  _TagSection(
+                    label: 'Language',
+                    options: _languages,
+                    selected: _selectedLanguage,
+                    onSelect: (v) => setState(
+                      () => _selectedLanguage = _selectedLanguage == v ? null : v,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
 
-            // --- Time ---
-            _TagSection(
-              label: 'Time of Day',
-              options: _times,
-              selected: _selectedTime,
-              onSelect: (v) => setState(() => _selectedTime = v),
-              customValue: _customTime,
-              onCustomChanged: (v) => setState(() => _customTime = v),
-            ),
-            const SizedBox(height: 32),
+                  // --- Time ---
+                  _TagSection(
+                    label: 'Time of Day',
+                    options: _times,
+                    selected: _selectedTime,
+                    onSelect: (v) => setState(
+                      () => _selectedTime = _selectedTime == v ? null : v,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
 
-            // --- Create button ---
-            ElevatedButton(
-              onPressed: _canCreate ? _createSession : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _canCreate ? kPrimary : Colors.grey.shade300,
-                foregroundColor: _canCreate ? Colors.white : kTextSecondary,
-                minimumSize: const Size(double.infinity, 48),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-              ),
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
+                  // --- Create button ---
+                  ElevatedButton(
+                    onPressed: _canCreate ? _createSession : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _canCreate ? kPrimary : Colors.grey.shade300,
+                      foregroundColor: _canCreate ? Colors.white : kTextSecondary,
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24),
                       ),
-                    )
-                  : const Text('Create JAM Session'),
-            ),
-            if (_selectedPlatform == null) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'Please select a platform to continue',
-                style: TextStyle(color: kRed, fontSize: 12),
-                textAlign: TextAlign.center,
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Create JAM Session'),
+                  ),
+                  const SizedBox(height: 24),
+                ],
               ),
-            ],
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
+            ),
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Platform button
+// Platform badge / no-platform banner
 // ---------------------------------------------------------------------------
 
-class _PlatformButton extends StatelessWidget {
-  final String label;
-  final Color color;
-  final bool isSelected;
-  final VoidCallback onTap;
+class _PlatformBadge extends StatelessWidget {
+  final String platform;
 
-  const _PlatformButton({
-    required this.label,
-    required this.color,
-    required this.isSelected,
-    required this.onTap,
-  });
+  const _PlatformBadge({required this.platform});
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withAlpha(30) : kSurface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? color : Colors.grey.shade300,
-            width: 2,
+    final isSpotify = platform == 'spotify';
+    final color = isSpotify ? kGreen : kRed;
+    final label = isSpotify ? 'Spotify' : 'YouTube Music';
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color, width: 1.5),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: isSelected ? color : kTextSecondary,
-              ),
-            ),
-          ],
-        ),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoPlatformConnectedBanner extends StatelessWidget {
+  final VoidCallback onConnect;
+
+  const _NoPlatformConnectedBanner({required this.onConnect});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: kRed.withAlpha(20),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kRed, width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "You haven't connected a platform yet.",
+            style: TextStyle(color: kRed, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: onConnect,
+            child: const Text('Connect Spotify or YouTube Music'),
+          ),
+        ],
       ),
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Tag section (label + wrap of chips + custom "+" chip)
+// Tag section (label + wrap of chips) — no custom "+" entry (removed: DNA
+// scoring only supports the fixed genre/mood/time maps, see project notes).
 // ---------------------------------------------------------------------------
 
 class _TagSection extends StatelessWidget {
@@ -281,16 +313,12 @@ class _TagSection extends StatelessWidget {
   final List<String> options;
   final String? selected;
   final ValueChanged<String> onSelect;
-  final String? customValue;
-  final ValueChanged<String?> onCustomChanged;
 
   const _TagSection({
     required this.label,
     required this.options,
     required this.selected,
     required this.onSelect,
-    required this.customValue,
-    required this.onCustomChanged,
   });
 
   @override
@@ -306,18 +334,13 @@ class _TagSection extends StatelessWidget {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: [
-            ...options.map((opt) => _TagChip(
-                  label: opt,
-                  isSelected: customValue == null && selected == opt,
-                  onTap: () => onSelect(opt),
-                )),
-            _AddCustomChip(
-              label: label,
-              currentValue: customValue,
-              onChanged: onCustomChanged,
-            ),
-          ],
+          children: options
+              .map((opt) => _TagChip(
+                    label: opt,
+                    isSelected: selected == opt,
+                    onTap: () => onSelect(opt),
+                  ))
+              .toList(),
         ),
       ],
     );
@@ -358,117 +381,6 @@ class _TagChip extends StatelessWidget {
             fontSize: 13,
             color: isSelected ? kPrimary : kTextSecondary,
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// "+" custom chip with dialog
-// ---------------------------------------------------------------------------
-
-class _AddCustomChip extends StatefulWidget {
-  final String label;
-  final String? currentValue;
-  final ValueChanged<String?> onChanged;
-
-  const _AddCustomChip({
-    required this.label,
-    required this.currentValue,
-    required this.onChanged,
-  });
-
-  @override
-  State<_AddCustomChip> createState() => _AddCustomChipState();
-}
-
-class _AddCustomChipState extends State<_AddCustomChip> {
-  Future<void> _openDialog() async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Add custom ${widget.label.toLowerCase()}'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'e.g. Farewell party, Study session...',
-          ),
-          onSubmitted: (v) {
-            if (v.trim().isNotEmpty) Navigator.of(ctx).pop(v.trim());
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final v = controller.text.trim();
-              if (v.isNotEmpty) Navigator.of(ctx).pop(v);
-            },
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-    if (result != null) widget.onChanged(result);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hasValue = widget.currentValue != null;
-
-    if (hasValue) {
-      return GestureDetector(
-        onTap: () => widget.onChanged(null),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: kCardAccent,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: kPrimary),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                widget.currentValue!,
-                style: const TextStyle(fontSize: 13, color: kPrimary),
-              ),
-              const SizedBox(width: 6),
-              const Icon(Icons.close, size: 14, color: kPrimary),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: _openDialog,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: kSurface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: Colors.grey.shade400,
-            strokeAlign: BorderSide.strokeAlignInside,
-          ),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.add, size: 14, color: kTextSecondary),
-            SizedBox(width: 4),
-            Text(
-              'Add your own...',
-              style: TextStyle(fontSize: 13, color: kTextSecondary),
-            ),
-          ],
         ),
       ),
     );

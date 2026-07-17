@@ -22,6 +22,10 @@ class _SessionScreenState extends State<SessionScreen> {
   String? _currentTrackId;
   WebSocketChannel? _channel;
   String? _sessionId;
+  // Section 7 — transparency: distinguish "still building" / "found fewer
+  // matches than requested" / "found nothing" from a silent empty screen.
+  String _queueBuildStatus = 'empty';
+  double? _effectiveThreshold;
 
   @override
   void initState() {
@@ -53,9 +57,12 @@ class _SessionScreenState extends State<SessionScreen> {
       if (!mounted) return;
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as List<dynamic>;
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final tracks = (data['tracks'] as List<dynamic>).cast<Map<String, dynamic>>();
         setState(() {
-          _tracks = data.cast<Map<String, dynamic>>();
+          _tracks = tracks;
+          _queueBuildStatus = data['queue_build_status'] as String? ?? 'empty';
+          _effectiveThreshold = (data['effective_threshold'] as num?)?.toDouble();
           _currentTrackId = _tracks.isNotEmpty
               ? _tracks.first['track_id'] as String?
               : null;
@@ -143,6 +150,11 @@ class _SessionScreenState extends State<SessionScreen> {
           ? const Center(child: CircularProgressIndicator(color: kPrimary))
           : Column(
               children: [
+                if (_queueBuildStatus == 'partial' || _queueBuildStatus == 'empty')
+                  _QueueStatusBanner(
+                    status: _queueBuildStatus,
+                    effectiveThreshold: _effectiveThreshold,
+                  ),
                 if (_tracks.isNotEmpty)
                   _NowPlayingCard(
                     key: ValueKey(_currentTrackId),
@@ -194,6 +206,50 @@ class _SessionScreenState extends State<SessionScreen> {
               onSkip: _skipTrack,
               onEnd: _endSession,
             ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Queue status banner (Section 7) — replaces a silent empty screen with a
+// concrete explanation of why the queue is short/empty.
+// ---------------------------------------------------------------------------
+
+class _QueueStatusBanner extends StatelessWidget {
+  final String status;
+  final double? effectiveThreshold;
+
+  const _QueueStatusBanner({required this.status, required this.effectiveThreshold});
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = effectiveThreshold != null ? (effectiveThreshold! * 100).round() : null;
+    final message = status == 'empty'
+        ? "We couldn't find any matching songs yet in the connected playlists. "
+            'The queue will update automatically once it does.'
+        : pct != null
+            ? 'We found expanded matches ($pct%) because there aren\'t enough '
+                'songs in the connected playlists yet.'
+            : "We found fewer matches than usual — the queue will keep updating.";
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: kPrimary.withAlpha(20),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kPrimary.withAlpha(80)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, size: 18, color: kPrimary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(message, style: const TextStyle(fontSize: 12.5, color: kTextSecondary)),
+          ),
+        ],
+      ),
     );
   }
 }

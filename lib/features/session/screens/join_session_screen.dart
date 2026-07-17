@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
 import '../../../core/theme.dart';
@@ -16,19 +15,42 @@ class JoinSessionScreen extends StatefulWidget {
 
 class _JoinSessionScreenState extends State<JoinSessionScreen> {
   String _code = '';
-  String? _platform;
   bool _isLoading = false;
   String? _error;
+
+  // Section 0 — the guest's own connected platform, independent of the
+  // host's. Auto-selected (at most one connected platform per account today).
+  bool _loadingPlatform = true;
+  String? _selectedPlatform;
 
   @override
   void initState() {
     super.initState();
-    SharedPreferences.getInstance().then((prefs) {
-      if (mounted) setState(() => _platform = prefs.getString('platform'));
+    _loadSelectedPlatform();
+  }
+
+  Future<void> _loadSelectedPlatform() async {
+    final token = await AuthService.getToken();
+    if (!mounted) return;
+    if (token == null) {
+      context.go('/');
+      return;
+    }
+    final me = await AuthService.getMe(token);
+    if (!mounted) return;
+    final platform = me?['platform'] as String?;
+    final platformToken = me?['platform_token'] as String?;
+    setState(() {
+      _selectedPlatform =
+          (platform != null && platformToken != null && platformToken.isNotEmpty)
+              ? platform
+              : null;
+      _loadingPlatform = false;
     });
   }
 
   Future<void> _joinSession() async {
+    if (_selectedPlatform == null) return;
     setState(() {
       _isLoading = true;
       _error = null;
@@ -42,11 +64,8 @@ class _JoinSessionScreenState extends State<JoinSessionScreen> {
         return;
       }
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('platform', _platform ?? 'spotify');
-
       final response = await http.get(
-        Uri.parse('$kBaseUrl/sessions/$_code/join'),
+        Uri.parse('$kBaseUrl/sessions/$_code/join?selected_platform=$_selectedPlatform'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (!mounted) return;
@@ -83,145 +102,145 @@ class _JoinSessionScreenState extends State<JoinSessionScreen> {
               )
             : null,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.people, size: 64, color: kPrimary),
-            const SizedBox(height: 16),
-            const Text(
-              'Enter Session Code',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: kTextPrimary,
+      body: _loadingPlatform
+          ? const Center(child: CircularProgressIndicator(color: kPrimary))
+          : Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.people, size: 64, color: kPrimary),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Enter Session Code',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: kTextPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Ask the host for the 6-character code',
+                    style: TextStyle(fontSize: 14, color: kTextSecondary),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 32),
+                  TextField(
+                    maxLength: 6,
+                    textAlign: TextAlign.center,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 8,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: 'XXXXXX',
+                      counterText: '',
+                    ),
+                    onChanged: (val) => setState(() => _code = val.toUpperCase()),
+                  ),
+                  const SizedBox(height: 16),
+                  if (_selectedPlatform != null)
+                    _PlatformBadge(platform: _selectedPlatform!)
+                  else
+                    _NoPlatformConnectedBanner(
+                      onConnect: () => context.push('/connect-platform'),
+                    ),
+                  const SizedBox(height: 24),
+                  if (_error != null)
+                    Text(
+                      _error!,
+                      style: const TextStyle(color: kRed, fontSize: 13),
+                    ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: _code.length == 6 && !_isLoading && _selectedPlatform != null
+                        ? _joinSession
+                        : null,
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Join Session'),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            const Text(
-              'Ask the host for the 6-character code',
-              style: TextStyle(fontSize: 14, color: kTextSecondary),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            TextField(
-              maxLength: 6,
-              textAlign: TextAlign.center,
-              textCapitalization: TextCapitalization.characters,
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 8,
-              ),
-              decoration: const InputDecoration(
-                hintText: 'XXXXXX',
-                counterText: '',
-              ),
-              onChanged: (val) => setState(() => _code = val.toUpperCase()),
-            ),
-            const SizedBox(height: 24),
-            if (_error != null)
-              Text(
-                _error!,
-                style: const TextStyle(color: kRed, fontSize: 13),
-              ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed:
-                  _code.length == 6 && !_isLoading ? _joinSession : null,
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text('Join Session'),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Your platform for this session:',
-              style: TextStyle(color: kTextSecondary, fontSize: 13),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _SmallPlatformButton(
-                  label: 'Spotify',
-                  color: kGreen,
-                  isSelected: _platform == 'spotify',
-                  onTap: () => setState(() => _platform = 'spotify'),
-                ),
-                const SizedBox(width: 12),
-                _SmallPlatformButton(
-                  label: 'YouTube',
-                  color: kRed,
-                  isSelected: _platform == 'youtube',
-                  onTap: () => setState(() => _platform = 'youtube'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Small platform button
+// Platform badge / no-platform banner (same visual language as CreateSessionScreen)
 // ---------------------------------------------------------------------------
 
-class _SmallPlatformButton extends StatelessWidget {
-  final String label;
-  final Color color;
-  final bool isSelected;
-  final VoidCallback onTap;
+class _PlatformBadge extends StatelessWidget {
+  final String platform;
 
-  const _SmallPlatformButton({
-    required this.label,
-    required this.color,
-    required this.isSelected,
-    required this.onTap,
-  });
+  const _PlatformBadge({required this.platform});
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withAlpha(30) : kSurface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? color : Colors.grey.shade300,
-            width: 1.5,
+    final isSpotify = platform == 'spotify';
+    final color = isSpotify ? kGreen : kRed;
+    final label = isSpotify ? 'Joining via Spotify' : 'Joining via YouTube Music';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color, width: 1.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? color : kTextSecondary,
-                fontWeight: FontWeight.w500,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: color, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoPlatformConnectedBanner extends StatelessWidget {
+  final VoidCallback onConnect;
+
+  const _NoPlatformConnectedBanner({required this.onConnect});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: kRed.withAlpha(20),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kRed, width: 1.5),
+      ),
+      child: Column(
+        children: [
+          const Text(
+            "You haven't connected a platform yet.",
+            style: TextStyle(color: kRed, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: onConnect,
+            child: const Text('Connect Spotify or YouTube Music'),
+          ),
+        ],
       ),
     );
   }
