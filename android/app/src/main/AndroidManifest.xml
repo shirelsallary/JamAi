@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="JAM AI"
@@ -45,16 +46,39 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- App-to-App Spotify auth: com.spotify.android:auth brings in its own
+             RedirectUriReceiverActivity, exported with an intent-filter for
+             ${redirectSchemeName}/${redirectHostName} (set to jamai/spotify-callback
+             below to satisfy the library's manifest placeholders) — the exact same
+             scheme+host MainActivity's own jamai:// intent-filter above already
+             claims for the existing, working browser-flow deep link. We only use
+             this library for App-to-App SSO (AuthorizationClient, launched only
+             after confirming the Spotify app is installed) and deliberately never
+             use its Custom-Tabs browser-fallback path, so this activity is removed
+             from the merged manifest to avoid two components racing to handle the
+             same jamai://spotify-callback redirect and breaking the existing
+             browser flow's deep-link delivery. -->
+        <activity
+            android:name="com.spotify.sdk.android.auth.browser.RedirectUriReceiverActivity"
+            tools:node="remove" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
          https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
 
-         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin.
+
+         Also declares com.spotify.music explicitly for App-to-App Spotify auth
+         install detection — com.spotify.android:auth's own bundled manifest
+         already declares this (plus its debug/canary/partners variants) via its
+         com.spotify.sso.action.START_AUTH_FLOW intent query, so this entry is
+         belt-and-suspenders, not strictly required by the merged manifest. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <package android:name="com.spotify.music"/>
     </queries>
 </manifest>

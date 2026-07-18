@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:app_links/app_links.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
+import '../../../core/spotify_app_auth.dart';
 import '../../../core/theme.dart';
 
 class ConnectPlatformScreen extends StatefulWidget {
@@ -20,6 +22,13 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   bool _isConnecting = false;
   bool _showVerifyButton = false;
   String? _error;
+
+  // App-to-App (Spotify Android app installed) specific failure state — kept
+  // separate from _error/_showVerifyButton (the pre-existing browser-flow
+  // states) since App-to-App failure needs its own "Use browser instead"
+  // manual fallback, not the "Already connected? Refresh" one.
+  String? _appToAppError;
+  String? _pendingAuthorizeUrl;
 
   AppLinks? _appLinks;
   StreamSubscription<Uri>? _linkSubscription;
@@ -119,12 +128,19 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
       return;
     }
 
-    setState(() => _isConnecting = true);
+    setState(() {
+      _isConnecting = true;
+      _appToAppError = null;
+    });
 
     try {
       // Bug 2 fix — this call is authenticated (normal Bearer header, made
       // from inside the app) and only returns the authorize URL; the JWT
-      // itself never reaches the external browser.
+      // itself never reaches the external browser. Both the App-to-App and
+      // browser paths below reuse this same response — App-to-App parses
+      // client_id/scope/state/redirect_uri out of it instead of duplicating
+      // them client-side, so there is exactly one source of truth for scopes
+      // and exactly one (single-use) state token generated per attempt.
       final response = await http.get(
         Uri.parse('$kBaseUrl/auth/oauth/spotify'),
         headers: {'Authorization': 'Bearer $token'},
@@ -135,18 +151,125 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
       }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final authorizeUrl = Uri.parse(data['authorize_url'] as String);
+      final authorizeUrlString = data['authorize_url'] as String;
+      _pendingAuthorizeUrl = authorizeUrlString;
 
-      if (await canLaunchUrl(authorizeUrl)) {
-        await launchUrl(authorizeUrl, mode: LaunchMode.externalApplication);
-        if (!mounted) return;
+      // Not-installed is a routing decision, not a failure — falls straight
+      // through to the existing browser flow below with no user-facing
+      // difference. Only an App-to-App attempt that actually starts (Spotify
+      // installed) and then fails/is cancelled shows an explicit error.
+      final useAppToApp = defaultTargetPlatform == TargetPlatform.android &&
+          await SpotifyAppAuth.isSpotifyInstalled();
+
+      if (useAppToApp) {
+        final params = SpotifyAuthorizeParams.fromAuthorizeUrl(authorizeUrlString);
+        if (params != null) {
+          await _attemptAppToApp(token, params);
+          return;
+        }
+        // authorize_url always carries these params in practice (the backend
+        // always includes them) — falling through to the browser flow is a
+        // safe default if that ever isn't true, rather than blocking connection.
+      }
+
+      await _openAuthorizeUrlInBrowser(authorizeUrlString);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isConnecting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open Spotify. Please try again.'),
+          backgroundColor: kRed,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openAuthorizeUrlInBrowser(String authorizeUrlString) async {
+    final authorizeUrl = Uri.parse(authorizeUrlString);
+    if (await canLaunchUrl(authorizeUrl)) {
+      await launchUrl(authorizeUrl, mode: LaunchMode.externalApplication);
+      if (!mounted) return;
+      setState(() {
+        _isConnecting = false;
+        _showVerifyButton = true;
+      });
+    } else {
+      throw Exception('Cannot launch URL');
+    }
+  }
+
+  Future<void> _attemptAppToApp(String token, SpotifyAuthorizeParams params) async {
+    final result = await SpotifyAppAuth.authorize(
+      clientId: params.clientId,
+      redirectUri: params.redirectUri,
+      scopes: params.scopes,
+      state: params.state,
+    );
+    if (!mounted) return;
+
+    if (!result.isSuccess) {
+      // Covers both cancellation and a hard error — per spec, an App-to-App
+      // attempt that doesn't end in a connected account always surfaces an
+      // explicit error with a manual fallback, never a silent retry or a
+      // silent drop back to the browser flow.
+      setState(() {
+        _isConnecting = false;
+        _appToAppError = result.isCancelled
+            ? 'Spotify connection was cancelled.'
+            : 'Could not connect with the Spotify app.';
+      });
+      return;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('$kBaseUrl/auth/oauth/spotify/exchange'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'code': result.code,
+          'state': result.state ?? params.state,
+        }),
+      );
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        context.go('/home');
+      } else {
         setState(() {
           _isConnecting = false;
-          _showVerifyButton = true;
+          _appToAppError = 'Could not connect with the Spotify app.';
         });
-      } else {
-        throw Exception('Cannot launch URL');
       }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isConnecting = false;
+        _appToAppError = 'Could not connect with the Spotify app.';
+      });
+    }
+  }
+
+  Future<void> _useBrowserInstead() async {
+    final authorizeUrlString = _pendingAuthorizeUrl;
+    if (authorizeUrlString == null) {
+      // Shouldn't happen (this button only shows after a successful fetch
+      // set it) — re-run the full flow rather than leaving the button inert.
+      await _connectSpotify();
+      return;
+    }
+
+    setState(() {
+      _appToAppError = null;
+      _isConnecting = true;
+    });
+
+    try {
+      await _openAuthorizeUrlInBrowser(authorizeUrlString);
     } catch (_) {
       if (!mounted) return;
       setState(() => _isConnecting = false);
@@ -254,6 +377,25 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
                     _error!,
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: kRed, fontSize: 12),
+                  ),
+                ),
+              if (_appToAppError != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    children: [
+                      Text(
+                        _appToAppError!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: kRed, fontSize: 12),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        key: const Key('use-browser-instead-button'),
+                        onPressed: _isConnecting ? null : _useBrowserInstead,
+                        child: const Text('Use browser instead'),
+                      ),
+                    ],
                   ),
                 ),
               if (_showVerifyButton)

@@ -64,6 +64,17 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('JAM AI'),
         actions: [
           IconButton(
+            key: const Key('manage-spotify-connection-button'),
+            icon: const Icon(Icons.music_note_outlined),
+            tooltip: 'Manage Spotify Connection',
+            // push (not go), and unconditional — ConnectPlatformScreen is
+            // otherwise only reachable via routes that skip it once
+            // platform_token is non-empty (login/register/splash), so an
+            // already-connected user has no way back in to re-grant newly
+            // added scopes without this entry point.
+            onPressed: () => context.push('/connect-platform'),
+          ),
+          IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',
             onPressed: _logout,
