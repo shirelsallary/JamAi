@@ -1,0 +1,9 @@
+# Serialized rather than the default per-CPU-core parallelism: several test
+# files (spotify_app_to_app_test.dart, spotify_playback_retry_test.dart) bind
+# a real local HttpServer to the fixed port kBaseUrl/kWsUrl hardcode
+# (127.0.0.1:8000) to exercise real http/WebSocket calls end-to-end rather
+# than mocking the network layer — see those files' own doc comments for why.
+# Running test files in parallel means two of them can try to bind that same
+# port at once. concurrency: 1 is the simplest durable fix, worth the slower
+# full-suite run for a project this size.
+concurrency: 1
