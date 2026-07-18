@@ -61,6 +61,15 @@ class SpotifyAdapter:
             self._handle_rate_limit(response)
         return response
 
+    async def _put(self, client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+        response = await client.put(url, headers=self._bearer(), **kwargs)
+        if response.status_code == 401:
+            await self.refresh_access_token()
+            response = await client.put(url, headers=self._bearer(), **kwargs)
+        if response.status_code == 429:
+            self._handle_rate_limit(response)
+        return response
+
     # ------------------------------------------------------------------
     # Public methods
     # ------------------------------------------------------------------
@@ -364,6 +373,34 @@ class SpotifyAdapter:
                     client,
                     f"{_API}/me/player/queue",
                     params={"uri": track_uri},
+                )
+                r.raise_for_status()
+            await with_retry(_call)
+
+    async def get_available_devices(self) -> list[dict]:
+        """GET /me/player/devices — used before any real playback command to
+        confirm an active device exists; the play/next/queue endpoints can't
+        activate a device from cold (see spotify_playback.py)."""
+        async with httpx.AsyncClient() as client:
+            async def _call():
+                r = await self._get(client, f"{_API}/me/player/devices")
+                r.raise_for_status()
+                return r.json()
+            data = await with_retry(_call)
+        return data.get("devices", [])
+
+    async def start_playback(self, track_id: str, device_id: str | None = None) -> None:
+        """PUT /me/player/play — starts real playback of a single track on the
+        given (or currently active) device. Requires Premium and an already-
+        active device; callers must check get_available_devices() first."""
+        params = {"device_id": device_id} if device_id else None
+        async with httpx.AsyncClient() as client:
+            async def _call():
+                r = await self._put(
+                    client,
+                    f"{_API}/me/player/play",
+                    params=params,
+                    json={"uris": [f"spotify:track:{track_id}"]},
                 )
                 r.raise_for_status()
             await with_retry(_call)

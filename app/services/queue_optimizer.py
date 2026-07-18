@@ -34,6 +34,7 @@ from app.services.queue_dna_engine import (
 )
 from app.services.session_dna import build_session_dna
 from app.services.social_overlap import social_sort_key
+from app.services.spotify_playback import attempt_spotify_playback
 from app.services.track_resolution import resolve_track_for_host_platform
 
 logger = logging.getLogger(__name__)
@@ -176,11 +177,23 @@ async def _build_initial(session_id: str, db, broadcast_fn) -> None:
     session.session_dna = dna
     await db.commit()
 
+    # Real playback — Spotify only; YouTube is driven client-side via the
+    # IFrame Player once the frontend sees host_platform == "youtube", no
+    # server-side call needed. Best-effort: a failure here (most commonly
+    # "no active device", not really a failure) never affects queue state,
+    # already committed above.
+    playback_status: dict | None = None
+    if resolved and session.host_platform == "spotify":
+        playback_status = await attempt_spotify_playback(
+            host_adapter, session, resolved[0]["track_id"]
+        )
+
     await broadcast_fn(session_id, {
         "event": "queue_updated",
         "track_count": len(resolved),
         "session_id": session_id,
         "queue_build_status": status,
+        "playback_status": playback_status,
     })
 
 
@@ -193,18 +206,62 @@ async def optimize_queue(session_id: str, broadcast_fn) -> None:
         logger.exception("optimize_queue failed for session %s", session_id)
 
 
+async def _rerank(session_id: str, db, broadcast_fn, skipped_track_id: str | None = None) -> None:
+    """Section 6 — skip / general re-rank. The re-rank itself (Section 6)
+    reads only session_candidate_tracks + queue_tracks and makes no adapter/
+    HTTP calls — that NFR-1/TC-7 guarantee is unchanged. The real-playback
+    attempt below is a separate, additional, best-effort step that runs only
+    after the DB re-rank has already committed; its failure never undoes or
+    blocks the DB update (see attempt_spotify_playback). Takes `db` explicitly
+    (rather than opening its own AsyncSessionLocal) so it's testable against
+    the in-memory test DB — see rerank_queue for the production entry point."""
+    session = await db.get(Session, UUID(session_id))
+    if session is None:
+        return
+    status = await rerank_from_candidates(db, session, skipped_track_id=skipped_track_id)
+
+    # Best-effort — the DB re-rank above already committed; nothing here may
+    # ever prevent the queue_updated broadcast from firing (a decrypt failure
+    # on a malformed token, for instance, is not a NoPlatformConnectedError
+    # and must not suppress the broadcast that tells the frontend the DB
+    # state it already needs is ready).
+    playback_status: dict | None = None
+    if session.host_platform == "spotify":
+        try:
+            current = await db.execute(
+                select(QueueTrack)
+                .where(QueueTrack.session_id == session.id, QueueTrack.is_current.is_(True))
+                .limit(1)
+            )
+            current_track = current.scalar_one_or_none()
+            if current_track is not None:
+                host_user = await db.get(User, session.host_user_id)
+                host_adapter = None
+                if host_user is not None:
+                    try:
+                        host_adapter = get_platform_adapter(host_user)
+                    except NoPlatformConnectedError:
+                        host_adapter = None
+                playback_status = await attempt_spotify_playback(
+                    host_adapter, session, current_track.track_id
+                )
+        except Exception:
+            logger.exception("Spotify playback attempt failed for session %s", session_id)
+            playback_status = {"status": "error", "reason": "PLAYBACK_ATTEMPT_FAILED"}
+
+    await broadcast_fn(session_id, {
+        "event": "queue_updated",
+        "session_id": session_id,
+        "queue_build_status": status,
+        "playback_status": playback_status,
+    })
+
+
 async def rerank_queue(session_id: str, broadcast_fn, skipped_track_id: str | None = None) -> None:
-    """Section 6 — skip / general re-rank. Reads only session_candidate_tracks
-    + queue_tracks; makes no adapter/HTTP calls."""
+    """Always called as a background task; manages its own DB session."""
     try:
         async with AsyncSessionLocal() as db:
-            session = await db.get(Session, UUID(session_id))
-            if session is None:
-                return
-            status = await rerank_from_candidates(db, session, skipped_track_id=skipped_track_id)
-            await broadcast_fn(session_id, {
-                "event": "queue_updated", "session_id": session_id, "queue_build_status": status,
-            })
+            await _rerank(session_id, db, broadcast_fn, skipped_track_id=skipped_track_id)
     except Exception:
         logger.exception("rerank_queue failed for session %s", session_id)
 

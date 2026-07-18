@@ -17,6 +17,11 @@ class FakeSpotifyAdapter:
         # (i.e. NOT returned by get_user_playlists) — models a genuine public
         # playlist that isn't one of this user's own saved playlists.
         public_playlist_tracks: dict[str, list[dict]] | None = None,
+        # Real playback control (spotify_playback.py) — devices as returned by
+        # GET /me/player/devices; empty by default (the common "no active
+        # device" case).
+        devices: list[dict] | None = None,
+        start_playback_raises: Exception | None = None,
     ):
         self.platform = "spotify"
         self._playlists = playlists or {}
@@ -25,6 +30,8 @@ class FakeSpotifyAdapter:
         self._artist_genres = artist_genres or {}
         self._search_results = search_results or []
         self._search_playlists_results = search_playlists_results or []
+        self._devices = devices or []
+        self._start_playback_raises = start_playback_raises
         self.calls: list[tuple] = []
 
     async def get_user_playlists(self, limit: int = 50):
@@ -52,6 +59,15 @@ class FakeSpotifyAdapter:
     async def search_playlists(self, query: str, limit: int = 5):
         self.calls.append(("search_playlists", query))
         return self._search_playlists_results
+
+    async def get_available_devices(self):
+        self.calls.append(("get_available_devices",))
+        return self._devices
+
+    async def start_playback(self, track_id: str, device_id: str | None = None):
+        self.calls.append(("start_playback", track_id, device_id))
+        if self._start_playback_raises is not None:
+            raise self._start_playback_raises
 
 
 class FakeYouTubeAdapter:

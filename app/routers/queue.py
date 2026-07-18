@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.platform_factory import NoPlatformConnectedError, get_platform_adapter
 from app.config import settings
 from app.database import get_db
-from app.models.models import PlaybackEvent, QueueTrack, Session
+from app.models.models import PlaybackEvent, QueueTrack, Session, User
 from app.routers.auth import get_current_user
 from app.schemas.schemas import QueueResponse, QueueTrackResponse, SkipRequest
 from app.services.connection_manager import manager
 from app.services.debounce_service import debouncer
 from app.services.queue_optimizer import optimize_queue, rerank_queue
 from app.services.session_buffer import session_buffer
+from app.services.spotify_playback import attempt_spotify_playback
 
 router = APIRouter()
 
@@ -100,6 +101,42 @@ async def skip(
     return {"message": "skip recorded, queue updating"}
 
 
+@router.post("/queue/{session_id}/play")
+async def play(
+    session_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry-Playback target — also used for the initial attempt when a
+    client opens a session whose auto-attempt (queue_optimizer.py) already
+    fired before this client connected to the WebSocket and missed the
+    broadcast. Works identically regardless of who calls it (host or guest):
+    always resolves and commands the session HOST's Spotify account, never
+    current_user's — see attempt_spotify_playback."""
+    session = await db.get(Session, UUID(session_id))
+    if session is None:
+        return {"status": "error", "reason": "SESSION_NOT_FOUND"}
+
+    result = await db.execute(
+        select(QueueTrack)
+        .where(QueueTrack.session_id == UUID(session_id), QueueTrack.is_current.is_(True))
+        .limit(1)
+    )
+    current_track = result.scalar_one_or_none()
+    if current_track is None:
+        return {"status": "error", "reason": "QUEUE_EMPTY"}
+
+    host_user = await db.get(User, session.host_user_id)
+    host_adapter = None
+    if host_user is not None:
+        try:
+            host_adapter = get_platform_adapter(host_user)
+        except NoPlatformConnectedError:
+            host_adapter = None
+
+    return await attempt_spotify_playback(host_adapter, session, current_track.track_id)
+
+
 @router.get("/queue/{session_id}", response_model=QueueResponse)
 async def get_queue(
     session_id: str,
@@ -128,6 +165,7 @@ async def get_queue(
                 if session and session.effective_threshold is not None
                 else None
             ),
+            "host_platform": session.host_platform if session else None,
         }
         session_buffer.save(session_id, payload)
         return JSONResponse(content=payload)

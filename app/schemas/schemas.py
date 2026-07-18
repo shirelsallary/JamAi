@@ -134,6 +134,11 @@ class QueueResponse(BaseModel):
     tracks: list[QueueTrackResponse]
     queue_build_status: str
     effective_threshold: Optional[float] = None
+    # Real playback control — the frontend needs this to decide which playback
+    # path (Spotify device control vs. YouTube IFrame Player) applies, and had
+    # no reliable way to learn it before (not in route params, not returned to
+    # guests at join time, no GET /sessions/{id} endpoint exists).
+    host_platform: Optional[str] = None
 
 
 class SkipRequest(BaseModel):
