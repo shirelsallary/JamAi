@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from uuid import UUID
 
@@ -100,19 +101,6 @@ class SpotifyAdapter:
             await db.commit()
 
         return self.access_token
-
-    async def get_user_profile(self) -> dict:
-        async with httpx.AsyncClient() as client:
-            async def _call():
-                r = await self._get(client, f"{_API}/me")
-                r.raise_for_status()
-                return r.json()
-            data = await with_retry(_call)
-        return {
-            "id": data.get("id"),
-            "email": data.get("email"),
-            "display_name": data.get("display_name"),
-        }
 
     async def get_top_tracks(self, limit: int = 20) -> list:
         cache_key = f"top_tracks:{self.user_id}:{limit}"
@@ -254,7 +242,9 @@ class SpotifyAdapter:
         return result
 
     async def get_playlist_tracks(self, playlist_id: str, limit: int = 100) -> list:
-        """GET /playlists/{id}/tracks — the actual saved tracks (Section 3, "not top-tracks!")."""
+        """GET /playlists/{id}/items (renamed from /tracks in the Feb 2026 Web API
+        migration — the old path is 403 for Dev Mode apps since March 2026) — the
+        actual saved tracks (Section 3, "not top-tracks!")."""
         cache_key = f"playlist_tracks:{playlist_id}:{limit}"
         cached = cache.get(cache_key)
         if cached is not None:
@@ -262,7 +252,7 @@ class SpotifyAdapter:
         async with httpx.AsyncClient() as client:
             async def _call():
                 r = await self._get(
-                    client, f"{_API}/playlists/{playlist_id}/tracks", params={"limit": limit}
+                    client, f"{_API}/playlists/{playlist_id}/items", params={"limit": limit}
                 )
                 r.raise_for_status()
                 return r.json()
@@ -283,8 +273,18 @@ class SpotifyAdapter:
         return result
 
     async def get_artists_genres(self, artist_ids: list[str]) -> dict[str, list[str]]:
-        """GET /artists?ids=... — batched, used to attach genres to playlist tracks
-        (Spotify track objects carry no genre field; genre lives on the artist)."""
+        """
+        GET /artists/{id} — one call per artist. The batched GET /artists?ids=...
+        form was removed outright in the Feb 2026 migration (no batch
+        replacement, per the migration guide's "Batch Fetch Endpoints (Removed)"
+        table) — used to attach genres to playlist tracks (Spotify track objects
+        carry no genre field; genre lives on the artist).
+
+        Bounded concurrency (8 at a time) since this is now O(n) requests
+        instead of O(n/50) — a participant with many distinct artists across
+        their playlists could otherwise serialize into a very slow scan.
+        A single artist's failure (404/etc.) is skipped, not fatal to the rest.
+        """
         artist_ids = [a for a in dict.fromkeys(artist_ids) if a]
         if not artist_ids:
             return {}
@@ -292,20 +292,27 @@ class SpotifyAdapter:
         cached = cache.get(cache_key)
         if cached is not None:
             return cached
+
         result: dict[str, list[str]] = {}
+        semaphore = asyncio.Semaphore(8)
+
+        async def _fetch_one(client: httpx.AsyncClient, artist_id: str) -> None:
+            async def _call():
+                r = await self._get(client, f"{_API}/artists/{artist_id}")
+                r.raise_for_status()
+                return r.json()
+
+            async with semaphore:
+                try:
+                    artist = await with_retry(_call)
+                except Exception:
+                    return
+            if artist:
+                result[artist["id"]] = artist.get("genres", [])
+
         async with httpx.AsyncClient() as client:
-            for i in range(0, len(artist_ids), 50):  # Spotify caps /artists at 50 ids
-                batch = artist_ids[i : i + 50]
+            await asyncio.gather(*(_fetch_one(client, aid) for aid in artist_ids))
 
-                async def _call():
-                    r = await self._get(client, f"{_API}/artists", params={"ids": ",".join(batch)})
-                    r.raise_for_status()
-                    return r.json()
-
-                data = await with_retry(_call)
-                for artist in data.get("artists", []):
-                    if artist:
-                        result[artist["id"]] = artist.get("genres", [])
         cache.set(cache_key, result, AUDIO_FEATURES_TTL)
         return result
 
@@ -382,14 +389,18 @@ class SpotifyAdapter:
         }
 
     async def create_playlist(self, name: str, track_uris: list[str]) -> str:
-        spotify_profile = await self.get_user_profile()
-        spotify_user_id = spotify_profile["id"]
-
+        """
+        POST /me/playlists — previously POST /users/{user_id}/playlists (required
+        a GET /me lookup first just to get the id). The Feb 2026 migration
+        restricted the {user_id}-scoped playlist endpoints to the current user
+        only, so /me/playlists is now both the current AND the required form —
+        the profile lookup (get_user_profile, removed) is no longer needed.
+        """
         async with httpx.AsyncClient() as client:
             async def _create():
                 r = await self._post(
                     client,
-                    f"{_API}/users/{spotify_user_id}/playlists",
+                    f"{_API}/me/playlists",
                     json={"name": name, "public": True},
                 )
                 r.raise_for_status()
@@ -399,9 +410,10 @@ class SpotifyAdapter:
             playlist_url = data["external_urls"]["spotify"]
 
             async def _add_tracks():
+                # /playlists/{id}/tracks renamed to /items in the Feb 2026 migration.
                 r2 = await self._post(
                     client,
-                    f"{_API}/playlists/{playlist_id}/tracks",
+                    f"{_API}/playlists/{playlist_id}/items",
                     json={"uris": track_uris},
                 )
                 r2.raise_for_status()
