@@ -20,6 +20,7 @@ _SCOPES = " ".join([
     "user-read-private",
     "user-read-email",
     "user-top-read",
+    "playlist-read-private",
     "playlist-modify-public",
     "user-modify-playback-state",
     "user-read-playback-state",
