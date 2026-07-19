@@ -1,10 +1,25 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.routers import admin, auth, playlist, queue, sessions, spotify
+from app.services.time_drift import start_drift_scheduler
 
-app = FastAPI(title="JAM AI", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Time-of-day drift re-ranking (app/services/time_drift.py) — a single
+    # background loop for the whole process, matching ConnectionManager's own
+    # single-process, in-memory design (see time_drift.py's multi-worker note).
+    drift_task = asyncio.create_task(start_drift_scheduler())
+    yield
+    drift_task.cancel()
+
+
+app = FastAPI(title="JAM AI", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
