@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
 import '../../../core/theme.dart';
+import '../../../core/widgets/widgets.dart';
 
 class ExportScreen extends StatefulWidget {
   final String sessionId;
@@ -90,104 +91,119 @@ class _ExportScreenState extends State<ExportScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Session Export'),
+        // Terminal screen — reached only after a session ends, with no
+        // meaningful "back" destination (Navigator.canPop is false here,
+        // same rationale as SessionQrScreen). Preserved unchanged.
         automaticallyImplyLeading: false,
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (_isExporting) ...[
-                const CircularProgressIndicator(color: kPrimary),
-                const SizedBox(height: 24),
-                const Text(
-                  'Saving your JAM playlist...',
-                  style: TextStyle(color: kTextSecondary),
-                ),
-              ] else if (_error != null) ...[
-                const Icon(Icons.error_outline, size: 64, color: kRed),
-                const SizedBox(height: 16),
-                Text(
-                  _error!,
-                  style: const TextStyle(color: kRed),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: _exportSession,
-                  child: const Text('Try Again'),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: () => context.go('/home'),
-                  child: const Text('Go to Home'),
-                ),
-              ] else if (_exported) ...[
-                const Icon(Icons.check_circle, size: 80, color: kGreen),
-                const SizedBox(height: 16),
-                const Text(
-                  'JAM Saved! 🎵',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: kTextPrimary,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '$_trackCount tracks saved to your playlist',
-                  style:
-                      const TextStyle(color: kTextSecondary, fontSize: 16),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-                if (_playlistUrl != null)
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: kCardAccent,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: kPrimary.withAlpha(50)),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Your Playlist',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, color: kPrimary),
-                        ),
-                        const SizedBox(height: 8),
-                        SelectableText(
-                          _playlistUrl!,
-                          style: const TextStyle(
-                              fontSize: 12, color: kTextSecondary),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 12),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.open_in_new),
-                          label: const Text('Open Playlist'),
-                          style: ElevatedButton.styleFrom(
-                              backgroundColor: kGreen),
-                          onPressed: _openPlaylist,
-                        ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.home),
-                  label: const Text('Back to Home'),
-                  onPressed: () => context.go('/home'),
-                ),
-              ],
-            ],
+      body: GradientBackground(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(kSpaceLg),
+              child: _isExporting
+                  ? _buildLoadingState()
+                  : _error != null
+                      ? _buildErrorState()
+                      : _exported
+                          ? _buildSuccessState()
+                          : const SizedBox.shrink(),
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const CircularProgressIndicator(color: kPrimary),
+        const SizedBox(height: kSpaceLg),
+        Text(
+          'Saving your JAM playlist...',
+          style: kDuskTextTheme.bodyMedium,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.error_outline, size: 64, color: kRed),
+        const SizedBox(height: kSpaceMd),
+        AppBanner(message: _error!, variant: AppBannerVariant.error),
+        const SizedBox(height: kSpaceLg),
+        PrimaryButton(label: 'Try Again', onPressed: _exportSession),
+        const SizedBox(height: kSpaceSm),
+        TextButton(
+          onPressed: () => context.go('/home'),
+          child: const Text('Go to Home'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSuccessState() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.check_circle, size: 80, color: kGreen),
+        const SizedBox(height: kSpaceMd),
+        Text('JAM Saved! \u{1F3B5}', style: kDuskTextTheme.headlineMedium),
+        const SizedBox(height: kSpaceSm),
+        Text(
+          '$_trackCount tracks saved to your playlist',
+          style: kDuskTextTheme.bodyMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: kSpaceXl),
+        if (_playlistUrl != null) ...[
+          Container(
+            padding: const EdgeInsets.all(kSpaceMd),
+            decoration: BoxDecoration(
+              color: kCardAccent,
+              borderRadius: BorderRadius.circular(kRadiusLg),
+              border: Border.all(color: kPrimary.withAlpha(kAlphaSoft)),
+            ),
+            child: Column(
+              children: [
+                Text('Your Playlist', style: kDuskTextTheme.titleMedium?.copyWith(color: kPrimary)),
+                const SizedBox(height: kSpaceSm),
+                SelectableText(
+                  _playlistUrl!,
+                  style: kDuskTextTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: kSpaceLg),
+          // Labeled "Open Playlist" rather than the mockup's "Save to
+          // Spotify" — the playlist is already saved automatically (export
+          // runs on screen load, above), so this button opens/confirms it
+          // rather than saving anything new. Also, export targets whichever
+          // platform the host connected (Spotify or YouTube — see
+          // playlist_service.py's get_platform_adapter), so a Spotify-
+          // specific label would be inaccurate for YouTube hosts.
+          PrimaryButton(
+            label: 'Open Playlist',
+            icon: Icons.open_in_new,
+            onPressed: _openPlaylist,
+          ),
+        ],
+        const SizedBox(height: kSpaceLg),
+        TextButton(
+          onPressed: () => context.go('/home'),
+          child: const Text('Back to Home'),
+        ),
+      ],
     );
   }
 }
