@@ -10,6 +10,7 @@ import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
 import '../../../core/spotify_app_auth.dart';
 import '../../../core/theme.dart';
+import '../../../core/widgets/widgets.dart';
 
 class ConnectPlatformScreen extends StatefulWidget {
   const ConnectPlatformScreen({super.key});
@@ -29,6 +30,13 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   // manual fallback, not the "Already connected? Refresh" one.
   String? _appToAppError;
   String? _pendingAuthorizeUrl;
+
+  // UI-only — which platform's row shows the connection/selection glow.
+  // Not read by any OAuth/deep-link logic below; set synchronously (before
+  // any await) at the start of each platform's tap handler so the glow
+  // reacts immediately, and never cleared in-place since a successful
+  // connection always navigates away from this screen.
+  AppPlatform? _selectedPlatform;
 
   AppLinks? _appLinks;
   StreamSubscription<Uri>? _linkSubscription;
@@ -121,6 +129,8 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   }
 
   Future<void> _connectSpotify() async {
+    setState(() => _selectedPlatform = AppPlatform.spotify);
+
     final token = await AuthService.getToken();
     if (!mounted) return;
     if (token == null) {
@@ -317,106 +327,110 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBackground,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Connect Platform'),
         leading: Navigator.canPop(context)
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
-                onPressed: () => context.pop(),
-              )
+            ? AppBackButton(onPressed: () => context.pop())
             : null,
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Icon(Icons.music_note, size: 64, color: kPrimary),
-              const SizedBox(height: 16),
-              const Text(
-                'Connect your music',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: kTextPrimary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Choose the platform you use to listen to music',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: kTextSecondary),
-              ),
-              const SizedBox(height: 48),
-              _PlatformConnectButton(
-                key: const Key('connect-spotify-button'),
-                label: 'Connect Spotify',
-                color: kGreen,
-                onTap: _isConnecting ? null : _connectSpotify,
-              ),
-              const SizedBox(height: 16),
-              _PlatformConnectButton(
-                key: const Key('connect-youtube-button'),
-                label: 'Connect YouTube Music',
-                color: kRed,
-                // Bug 2 fix — used to show a blocking "unsupported" dialog
-                // even though YouTubeWebViewScreen already exists and works;
-                // it was simply unreachable. push (not go) so the back
-                // button on YouTubeWebViewScreen has somewhere to return to.
-                onTap: _isConnecting ? null : () => context.push('/youtube-connect'),
-              ),
-              const SizedBox(height: 24),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    _error!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: kRed, fontSize: 12),
+      body: GradientBackground(
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(kSpaceLg),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: kPrimaryGradient),
+                      borderRadius: BorderRadius.circular(kRadiusLg),
+                      boxShadow: [
+                        BoxShadow(
+                          color: kPrimaryGradientStart.withAlpha(kAlphaMedium),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.music_note, size: 32, color: Colors.white),
                   ),
                 ),
-              if (_appToAppError != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    children: [
-                      Text(
-                        _appToAppError!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: kRed, fontSize: 12),
-                      ),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        key: const Key('use-browser-instead-button'),
-                        onPressed: _isConnecting ? null : _useBrowserInstead,
-                        child: const Text('Use browser instead'),
-                      ),
-                    ],
+                const SizedBox(height: kSpaceMd),
+                Text(
+                  'Connect your music',
+                  textAlign: TextAlign.center,
+                  style: kDuskTextTheme.headlineMedium,
+                ),
+                const SizedBox(height: kSpaceSm),
+                const Text(
+                  'Choose the platform you use to listen to music',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, color: kTextSecondary),
+                ),
+                const SizedBox(height: kSpaceXxl),
+                _PlatformConnectButton(
+                  key: const Key('connect-spotify-button'),
+                  label: 'Connect Spotify',
+                  color: kGreen,
+                  isSelected: _selectedPlatform == AppPlatform.spotify,
+                  onTap: _isConnecting ? null : _connectSpotify,
+                ),
+                const SizedBox(height: kSpaceMd),
+                _PlatformConnectButton(
+                  key: const Key('connect-youtube-button'),
+                  label: 'Connect YouTube Music',
+                  // kYouTubeRed (brand token), not kRed (error token) — see
+                  // theme.dart's token-separation notes from the Dusk
+                  // redesign foundation.
+                  color: kYouTubeRed,
+                  isSelected: _selectedPlatform == AppPlatform.youtube,
+                  onTap: _isConnecting
+                      ? null
+                      : () {
+                          setState(() => _selectedPlatform = AppPlatform.youtube);
+                          // Bug 2 fix — used to show a blocking "unsupported"
+                          // dialog even though YouTubeWebViewScreen already
+                          // exists and works; it was simply unreachable.
+                          // push (not go) so the back button on
+                          // YouTubeWebViewScreen has somewhere to return to.
+                          context.push('/youtube-connect');
+                        },
+                ),
+                const SizedBox(height: kSpaceLg),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: kSpaceSm + 4),
+                    child: AppBanner(message: _error!, variant: AppBannerVariant.error),
                   ),
+                if (_appToAppError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: kSpaceSm + 4),
+                    child: AppBanner(
+                      message: _appToAppError!,
+                      variant: AppBannerVariant.error,
+                      actionLabel: 'Use browser instead',
+                      actionKey: const Key('use-browser-instead-button'),
+                      onAction: _isConnecting ? null : _useBrowserInstead,
+                    ),
+                  ),
+                if (_showVerifyButton)
+                  PrimaryButton(
+                    label: 'Already connected? Refresh',
+                    onPressed: _isConnecting ? null : _verifyAndContinue,
+                    isLoading: _isConnecting,
+                  ),
+                TextButton(
+                  onPressed: () => context.go('/home'),
+                  style: TextButton.styleFrom(foregroundColor: kTextSecondary),
+                  child: const Text('Skip for now'),
                 ),
-              if (_showVerifyButton)
-                ElevatedButton(
-                  onPressed: _isConnecting ? null : _verifyAndContinue,
-                  child: _isConnecting
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text('Already connected? Refresh'),
-                ),
-              TextButton(
-                onPressed: () => context.go('/home'),
-                child: const Text('Skip for now'),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -432,12 +446,18 @@ class _PlatformConnectButton extends StatelessWidget {
   final String label;
   final Color color;
   final VoidCallback? onTap;
+  // Glow reflects live selection/connection state (which platform the user
+  // most recently tapped/attempted), driven by ConnectPlatformScreen's
+  // _selectedPlatform — not a static per-platform identity. Both rows are
+  // always tappable regardless of this value.
+  final bool isSelected;
 
   const _PlatformConnectButton({
     super.key,
     required this.label,
     required this.color,
     required this.onTap,
+    this.isSelected = false,
   });
 
   @override
@@ -447,11 +467,20 @@ class _PlatformConnectButton extends StatelessWidget {
       child: Opacity(
         opacity: onTap == null ? 0.5 : 1.0,
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(kSpaceMd),
           decoration: BoxDecoration(
-            color: color.withAlpha(20),
-            borderRadius: BorderRadius.circular(12),
+            color: color.withAlpha(kAlphaSoft),
+            borderRadius: BorderRadius.circular(kRadiusMd),
             border: Border.all(color: color, width: 1.5),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: color.withAlpha(kAlphaMedium),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : null,
           ),
           child: Row(
             children: [
@@ -460,7 +489,7 @@ class _PlatformConnectButton extends StatelessWidget {
                 height: 16,
                 decoration: BoxDecoration(color: color, shape: BoxShape.circle),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: kSpaceSm),
               Text(
                 label,
                 style: TextStyle(

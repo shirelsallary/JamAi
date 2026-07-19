@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/theme.dart';
+import '../../../core/widgets/widgets.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -121,97 +122,76 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBackground,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Create Account'),
         leading: Navigator.canPop(context)
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
-                onPressed: () => context.pop(),
-              )
+            ? AppBackButton(onPressed: () => context.pop())
             : null,
       ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 60),
-              const Text(
-                'JAM AI',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: kPrimary,
-                ),
+      body: GradientBackground(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(kSpaceLg),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 60),
+                  Text(
+                    'JAM AI',
+                    textAlign: TextAlign.center,
+                    style: kDuskTextTheme.displayLarge,
+                  ),
+                  const SizedBox(height: kSpaceSm),
+                  const Text(
+                    'Create your account',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: kTextSecondary),
+                  ),
+                  const SizedBox(height: kSpaceXxl),
+                  AppTextField(
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    labelText: 'Email',
+                    helperText: 'Format: example@gmail.com',
+                  ),
+                  const SizedBox(height: kSpaceMd),
+                  AppTextField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    keyboardType: TextInputType.visiblePassword,
+                    labelText: 'Password',
+                    helperText: 'Min 8 chars, 1 uppercase, 1 number, 1 symbol (!@#\$)',
+                  ),
+                  const SizedBox(height: kSpaceMd),
+                  AppTextField(
+                    controller: _confirmController,
+                    obscureText: true,
+                    keyboardType: TextInputType.visiblePassword,
+                    labelText: 'Confirm Password',
+                    helperText: 'Must match password above',
+                    onSubmitted: (_) => _register(),
+                  ),
+                  const SizedBox(height: kSpaceLg),
+                  PrimaryButton(
+                    label: 'Register',
+                    onPressed: _loading ? null : _register,
+                    isLoading: _loading,
+                  ),
+                  TextButton(
+                    // pop (not go) — RegisterScreen is only ever reached by
+                    // pushing from LoginScreen, so Login is already on the
+                    // stack.
+                    onPressed: () => context.pop(),
+                    child: const Text('Already have an account? Login'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              const Text(
-                'Create your account',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: kTextSecondary),
-              ),
-              const SizedBox(height: 48),
-              TextField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  helperText: 'Format: example@gmail.com',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                keyboardType: TextInputType.visiblePassword,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  helperText:
-                      'Min 8 chars, 1 uppercase, 1 number, 1 symbol (!@#\$)',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _confirmController,
-                obscureText: true,
-                keyboardType: TextInputType.visiblePassword,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'Confirm Password',
-                  helperText: 'Must match password above',
-                ),
-                onSubmitted: (_) => _register(),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _loading ? null : _register,
-                child: _loading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text('Register'),
-              ),
-              TextButton(
-                // pop (not go) — RegisterScreen is only ever reached by
-                // pushing from LoginScreen, so Login is already on the stack.
-                onPressed: () => context.pop(),
-                child: const Text('Already have an account? Login'),
-              ),
-            ],
+            ),
           ),
         ),
       ),

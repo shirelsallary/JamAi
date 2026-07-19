@@ -91,6 +91,23 @@ void main() {
       expect(changed, 'a@b.com');
     });
 
+    testWidgets('enableSuggestions/autocorrect override the obscureText-linked default',
+        (tester) async {
+      await tester.pumpWidget(_host(
+        const AppTextField(
+          labelText: 'Email',
+          enableSuggestions: false,
+          autocorrect: false,
+        ),
+      ));
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      // obscureText defaults to false, which would normally default both of
+      // these to true — the explicit override must win.
+      expect(textField.enableSuggestions, isFalse);
+      expect(textField.autocorrect, isFalse);
+    });
+
     testWidgets('.code preset matches JoinSessionScreen\'s current inline styling', (tester) async {
       String? changed;
       await tester.pumpWidget(_host(
@@ -181,6 +198,21 @@ void main() {
 
       expect(find.text('Retry'), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('actionKey is applied to the action button so call sites can find it directly',
+        (tester) async {
+      await tester.pumpWidget(_host(
+        AppBanner(
+          message: 'Could not connect with the Spotify app.',
+          variant: AppBannerVariant.error,
+          actionLabel: 'Use browser instead',
+          actionKey: const Key('use-browser-instead-button'),
+          onAction: () {},
+        ),
+      ));
+
+      expect(find.byKey(const Key('use-browser-instead-button')), findsOneWidget);
     });
 
     testWidgets('with no actionLabel, renders message only', (tester) async {

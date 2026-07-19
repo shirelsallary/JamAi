@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/theme.dart';
+import '../../../core/widgets/widgets.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -37,30 +38,23 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kPrimary,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.music_note, size: 80, color: Colors.white),
-            const SizedBox(height: 16),
-            const Text(
-              'JAM AI',
-              style: TextStyle(
-                fontSize: 36,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-                letterSpacing: 4,
+      body: GradientBackground(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.music_note, size: 80, color: kPrimary),
+              const SizedBox(height: kSpaceMd),
+              Text('JAM AI', style: kDuskTextTheme.displayLarge),
+              const SizedBox(height: kSpaceSm),
+              const Text(
+                'Shared listening, reimagined',
+                style: TextStyle(color: kTextSecondary, fontSize: 14),
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Shared listening, reimagined',
-              style: TextStyle(color: Colors.white70, fontSize: 14),
-            ),
-            const SizedBox(height: 48),
-            const CircularProgressIndicator(color: Colors.white70),
-          ],
+              const SizedBox(height: kSpaceXxl),
+              const CircularProgressIndicator(color: kPrimary),
+            ],
+          ),
         ),
       ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/theme.dart';
+import '../../../core/widgets/widgets.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -68,75 +69,65 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBackground,
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 60),
-              const Text(
-                'JAM AI',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: kPrimary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Shared listening, reimagined',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: kTextSecondary),
-              ),
-              const SizedBox(height: 48),
-              TextField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: const InputDecoration(labelText: 'Email'),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                keyboardType: TextInputType.visiblePassword,
-                enableSuggestions: false,
-                autocorrect: false,
-                decoration: const InputDecoration(labelText: 'Password'),
-                onSubmitted: (_) => _login(),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _loading ? null : _login,
-                child: _loading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text('Login'),
-              ),
-              Row(
+      body: GradientBackground(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(kSpaceLg),
+              child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text('New here?', style: TextStyle(color: kTextSecondary)),
-                  TextButton(
-                    // push (not go) — Register should have a working back
-                    // button to return here, per the navigation audit.
-                    onPressed: () => context.push('/register'),
-                    child: const Text('Create account →'),
+                  const SizedBox(height: 60),
+                  Text(
+                    'JAM AI',
+                    textAlign: TextAlign.center,
+                    style: kDuskTextTheme.displayLarge,
+                  ),
+                  const SizedBox(height: kSpaceSm),
+                  const Text(
+                    'Shared listening, reimagined',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: kTextSecondary),
+                  ),
+                  const SizedBox(height: kSpaceXxl),
+                  AppTextField(
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    labelText: 'Email',
+                  ),
+                  const SizedBox(height: kSpaceMd),
+                  AppTextField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    keyboardType: TextInputType.visiblePassword,
+                    labelText: 'Password',
+                    onSubmitted: (_) => _login(),
+                  ),
+                  const SizedBox(height: kSpaceLg),
+                  PrimaryButton(
+                    label: 'Login',
+                    onPressed: _loading ? null : _login,
+                    isLoading: _loading,
+                  ),
+                  const SizedBox(height: kSpaceSm),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('New here?', style: TextStyle(color: kTextSecondary)),
+                      TextButton(
+                        // push (not go) — Register should have a working back
+                        // button to return here, per the navigation audit.
+                        onPressed: () => context.push('/register'),
+                        child: const Text('Create account →'),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),

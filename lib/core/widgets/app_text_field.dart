@@ -21,6 +21,15 @@ class AppTextField extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
+  /// Explicit overrides for suggestion/autocorrect behavior. Default to
+  /// `!obscureText` when omitted (a password field disables both, a normal
+  /// field allows both) — but some fields need both off regardless of
+  /// obscureText (e.g. an email field, where autocorrect actively mangles
+  /// addresses). Added for LoginScreen/RegisterScreen's email fields, which
+  /// forced both off explicitly before this widget existed.
+  final bool? enableSuggestions;
+  final bool? autocorrect;
+
   const AppTextField({
     super.key,
     this.controller,
@@ -35,6 +44,8 @@ class AppTextField extends StatelessWidget {
     this.maxLength,
     this.onChanged,
     this.onSubmitted,
+    this.enableSuggestions,
+    this.autocorrect,
   });
 
   /// The large, centered, letter-spaced 6-character session-code field
@@ -77,8 +88,8 @@ class AppTextField extends StatelessWidget {
       keyboardType: keyboardType,
       textCapitalization: textCapitalization,
       textAlign: textAlign,
-      enableSuggestions: !obscureText,
-      autocorrect: !obscureText,
+      enableSuggestions: enableSuggestions ?? !obscureText,
+      autocorrect: autocorrect ?? !obscureText,
       maxLength: maxLength,
       style: style ?? const TextStyle(color: kTextPrimary),
       onChanged: onChanged,

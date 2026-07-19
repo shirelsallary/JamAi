@@ -25,6 +25,12 @@ class AppBanner extends StatelessWidget {
   final bool isActionLoading;
   final IconData? icon;
 
+  /// Key applied to the action button, when present. Needed because at
+  /// least one existing widget test asserts directly on the "Use browser
+  /// instead" action's Key (connect_platform_screen.dart) — restyling that
+  /// banner into AppBanner must not lose the ability to find it.
+  final Key? actionKey;
+
   const AppBanner({
     super.key,
     required this.message,
@@ -33,6 +39,7 @@ class AppBanner extends StatelessWidget {
     this.onAction,
     this.isActionLoading = false,
     this.icon,
+    this.actionKey,
   });
 
   Color get _color {
@@ -97,6 +104,7 @@ class AppBanner extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2, color: color),
                   )
                 : TextButton(
+                    key: actionKey,
                     onPressed: onAction,
                     child: Text(actionLabel!),
                   ),

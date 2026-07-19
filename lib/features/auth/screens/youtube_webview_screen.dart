@@ -91,8 +91,10 @@ class _YouTubeWebViewScreenState extends State<YouTubeWebViewScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Connect YouTube Music'),
-        backgroundColor: kRed,
-        foregroundColor: Colors.white,
+        // Was hardcoded to kRed, overriding every other screen's AppBar
+        // treatment — fixed to inherit jamAiTheme's appBarTheme like
+        // everywhere else. Everything below (WebView, cookie-scrape logic)
+        // is untouched.
         leading: IconButton(
           icon: const Icon(Icons.close),
           // pop (not go) — this screen is only ever reached by pushing from
