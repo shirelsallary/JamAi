@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
 import '../../../core/theme.dart';
+import '../../../core/widgets/widgets.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -58,9 +59,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Same _sessions data as before, just grouped for display by the
+    // status field already present on every session — no new fetching or
+    // filtering criteria beyond what was already available.
+    final liveSessions = _sessions.where((s) => s['status'] == 'active').toList();
+    final pastSessions = _sessions.where((s) => s['status'] != 'active').toList();
+
     return Scaffold(
-      backgroundColor: kBackground,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
+        // Kept as "JAM AI" (not the mockup's shorter "JAM") — same
+        // established decision as the auth screens' wordmark.
         title: const Text('JAM AI'),
         actions: [
           IconButton(
@@ -79,81 +88,111 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Logout',
             onPressed: _logout,
           ),
+          const Padding(
+            padding: EdgeInsets.only(right: kSpaceMd),
+            child: Avatar(size: 36),
+          ),
         ],
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.add),
-                    label: const Text('Create JAM'),
-                    // push — user should be able to back out of the create
-                    // form to Home (see navigation audit).
-                    onPressed: () => context.push('/session/create'),
-                  ),
+      body: GradientBackground(
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(kSpaceMd, kSpaceSm, kSpaceMd, kSpaceMd),
+                child: Text(
+                  'What are we vibing to?',
+                  style: kDuskTextTheme.headlineLarge,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.qr_code_scanner),
-                    label: const Text('Join JAM'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: kPrimary,
-                      side: const BorderSide(color: kPrimary),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: kSpaceMd),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _HomeActionCard(
+                        icon: Icons.add,
+                        label: 'Create JAM',
+                        isPrimary: true,
+                        // push — user should be able to back out of the
+                        // create form to Home (see navigation audit).
+                        onTap: () => context.push('/session/create'),
                       ),
-                      minimumSize: const Size(double.infinity, 48),
                     ),
-                    onPressed: () => context.push('/session/join'),
-                  ),
+                    const SizedBox(width: kSpaceMd),
+                    Expanded(
+                      child: _HomeActionCard(
+                        icon: Icons.qr_code_scanner,
+                        label: 'Join JAM',
+                        isPrimary: false,
+                        onTap: () => context.push('/session/join'),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Past Sessions',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : RefreshIndicator(
-                    color: kPrimary,
-                    onRefresh: _loadHistory,
-                    child: _sessions.isEmpty
-                        ? ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            children: const [
-                              SizedBox(height: 120),
-                              Center(
-                                child: Text(
-                                  'No sessions yet',
-                                  style: TextStyle(color: kTextSecondary),
-                                ),
+              ),
+              const SizedBox(height: kSpaceLg),
+              Expanded(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator(color: kPrimary))
+                    : RefreshIndicator(
+                        color: kPrimary,
+                        onRefresh: _loadHistory,
+                        child: _sessions.isEmpty
+                            ? ListView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                children: const [
+                                  SizedBox(height: 120),
+                                  Center(
+                                    child: Text(
+                                      'No sessions yet',
+                                      style: TextStyle(color: kTextSecondary),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : ListView(
+                                padding: const EdgeInsets.symmetric(horizontal: kSpaceMd),
+                                children: [
+                                  if (liveSessions.isNotEmpty) ...[
+                                    Row(
+                                      children: [
+                                        Container(
+                                          width: 8,
+                                          height: 8,
+                                          decoration: const BoxDecoration(
+                                            color: kPrimary,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: kSpaceSm),
+                                        Text(
+                                          'LIVE NOW',
+                                          style: kDuskTextTheme.labelSmall
+                                              ?.copyWith(color: kPrimary),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: kSpaceSm),
+                                    ...liveSessions.map((s) => _SessionCard(session: s)),
+                                    const SizedBox(height: kSpaceLg),
+                                  ],
+                                  if (pastSessions.isNotEmpty) ...[
+                                    Text('Past Sessions', style: kDuskTextTheme.titleMedium),
+                                    const SizedBox(height: kSpaceSm),
+                                    ...pastSessions.map((s) => _SessionCard(session: s)),
+                                  ],
+                                ],
                               ),
-                            ],
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            itemCount: _sessions.length,
-                            itemBuilder: (ctx, i) =>
-                                _SessionCard(session: _sessions[i]),
-                          ),
-                  ),
+                      ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
       bottomNavigationBar: BottomNavigationBar(
+        backgroundColor: kSurface,
         currentIndex: _currentIndex,
         selectedItemColor: kPrimary,
         unselectedItemColor: kTextSecondary,
@@ -181,6 +220,67 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Home action card — the mockup's square "Create JAM"/"Join JAM" tiles.
+// Screen-local (like ConnectPlatformScreen's _PlatformConnectButton): only
+// used here, so not promoted to the shared widget library.
+// ---------------------------------------------------------------------------
+
+class _HomeActionCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isPrimary;
+  final VoidCallback onTap;
+
+  const _HomeActionCard({
+    required this.icon,
+    required this.label,
+    required this.isPrimary,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Container(
+          padding: const EdgeInsets.all(kSpaceMd),
+          decoration: BoxDecoration(
+            gradient: isPrimary ? const LinearGradient(colors: kPrimaryGradient) : null,
+            color: isPrimary ? null : kCardSurface,
+            borderRadius: BorderRadius.circular(kRadiusMd),
+            boxShadow: isPrimary
+                ? [
+                    BoxShadow(
+                      color: kPrimaryGradientStart.withAlpha(kAlphaMedium),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Icon(icon, color: isPrimary ? Colors.white : kTextPrimary, size: 28),
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: isPrimary ? Colors.white : kTextPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SessionCard extends StatelessWidget {
   final Map<String, dynamic> session;
 
@@ -190,6 +290,7 @@ class _SessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final code = session['session_code'] ?? '—';
     final status = session['status'] ?? 'closed';
+    final isActive = status == 'active';
     final contextVector =
         session['context_vector'] as Map<String, dynamic>? ?? {};
     final genre = contextVector['genre'] ?? '';
@@ -202,52 +303,36 @@ class _SessionCard extends StatelessWidget {
       // creating/joining (see navigation audit).
       onTap: () => context.push('/session/${session['id']}'),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
+        margin: const EdgeInsets.only(bottom: kSpaceSm + 2),
+        padding: const EdgeInsets.symmetric(horizontal: kSpaceMd, vertical: kSpaceSm + 2),
         decoration: BoxDecoration(
-          color: kCardAccent,
-          borderRadius: BorderRadius.circular(12),
-          border: const Border(
-            left: BorderSide(color: kPrimary, width: 4),
-          ),
+          color: isActive ? kCardAccent : kCardSurface,
+          borderRadius: BorderRadius.circular(kRadiusMd),
+          border: isActive ? Border.all(color: kPrimary.withAlpha(kAlphaMedium)) : null,
         ),
-        child: ListTile(
-          title: Text(
-            code,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: kTextPrimary,
+        child: Row(
+          children: [
+            Icon(
+              isActive ? Icons.graphic_eq : Icons.check_circle_outline,
+              color: isActive ? kPrimary : kTextSecondary,
+              size: 20,
             ),
-          ),
-          subtitle: subtitle.isNotEmpty
-              ? Text(subtitle, style: const TextStyle(color: kTextSecondary))
-              : null,
-          trailing: _StatusChip(status: status),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  final String status;
-
-  const _StatusChip({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final isActive = status == 'active';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: isActive ? kGreen.withAlpha(30) : Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        status,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: isActive ? kGreen : kTextSecondary,
+            const SizedBox(width: kSpaceSm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    code,
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: kTextPrimary),
+                  ),
+                  if (subtitle.isNotEmpty)
+                    Text(subtitle, style: const TextStyle(color: kTextSecondary, fontSize: 12)),
+                ],
+              ),
+            ),
+            if (!isActive) Text('ENDED', style: kDuskTextTheme.labelSmall),
+          ],
         ),
       ),
     );
