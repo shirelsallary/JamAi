@@ -6,6 +6,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
 import '../../../core/theme.dart';
+import '../../../core/widgets/widgets.dart';
 import '../../../core/youtube_player_event.dart';
 import '../widgets/youtube_player_widget.dart';
 
@@ -250,85 +251,145 @@ class _SessionScreenState extends State<SessionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
+        // "Dismiss chevron" — same go('/home') as before, not a pop; kept
+        // as an always-present leading icon (unlike other screens'
+        // canPop-conditional pattern), matching the pre-existing behavior.
+        leading: AppBackButton(onPressed: () => context.go('/home')),
         title: const Text('JAM Session'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
-          onPressed: () => context.go('/home'),
-        ),
+        // The AppBar previously also carried a redundant exit_to_app icon
+        // that called the exact same _endSession() as the bottom "End &
+        // export queue" button. Dropped in favor of mockup image 7's
+        // "● LIVE" indicator here — _endSession() itself is untouched and
+        // still fully reachable via the one remaining (bottom) button, so
+        // this removes a duplicate entry point, not the capability itself.
         actions: [
-          IconButton(
-            icon: const Icon(Icons.exit_to_app, color: Colors.white),
-            onPressed: _endSession,
-            tooltip: 'End Session',
+          Padding(
+            padding: const EdgeInsets.only(right: kSpaceMd),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(color: kPrimary, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: kSpaceXs),
+                Text('LIVE', style: kDuskTextTheme.labelSmall?.copyWith(color: kPrimary)),
+              ],
+            ),
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: kPrimary))
-          : Column(
-              children: [
-                if (_queueBuildStatus == 'partial' || _queueBuildStatus == 'empty')
-                  _QueueStatusBanner(
-                    status: _queueBuildStatus,
-                    effectiveThreshold: _effectiveThreshold,
-                  ),
-                if (_hostPlatform == 'spotify' &&
-                    (_spotifyPlaybackStatus == 'no_active_device' ||
-                        _spotifyPlaybackStatus == 'error'))
-                  _SpotifyPlaybackBanner(
-                    key: const Key('spotify-playback-banner'),
-                    status: _spotifyPlaybackStatus!,
-                    isRetrying: _isRetryingPlayback,
-                    onRetry: _attemptSpotifyPlayback,
-                  ),
-                if (_tracks.isNotEmpty)
-                  _NowPlayingCard(
-                    key: ValueKey(_currentTrackId),
-                    track: _tracks.first,
-                    onSkip: _skipTrack,
-                    hostPlatform: _hostPlatform,
-                    onYouTubeEvent: _handleYouTubePlayerEvent,
-                  ),
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Row(
-                    children: [
-                      const Text(
-                        'Up Next',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+      body: GradientBackground(
+        child: SafeArea(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator(color: kPrimary))
+              : CustomScrollView(
+                  // A CustomScrollView (not the previous fixed Column +
+                  // Expanded(ListView)) so the banners + now-playing card
+                  // and the queue list share one scroll surface: the
+                  // restyled now-playing card is taller than before (the
+                  // decorative Spotify placeholder), which overflowed the
+                  // old fixed-height layout on shorter viewports. This was
+                  // caught by re-running spotify_playback_retry_test.dart
+                  // during this stage, not something touching WebSocket/
+                  // playback/skip logic — SliverFillRemaining still centers
+                  // "Queue is empty" correctly when content is short.
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: Column(
+                        children: [
+                          if (_queueBuildStatus == 'partial' || _queueBuildStatus == 'empty')
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(kSpaceMd, kSpaceSm + 4, kSpaceMd, 0),
+                              child: _QueueStatusBanner(
+                                status: _queueBuildStatus,
+                                effectiveThreshold: _effectiveThreshold,
+                              ),
+                            ),
+                          if (_hostPlatform == 'spotify' &&
+                              (_spotifyPlaybackStatus == 'no_active_device' ||
+                                  _spotifyPlaybackStatus == 'error'))
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(kSpaceMd, kSpaceSm + 4, kSpaceMd, 0),
+                              child: AppBanner(
+                                key: const Key('spotify-playback-banner'),
+                                message: _spotifyPlaybackStatus == 'no_active_device'
+                                    ? 'Open Spotify on your phone and play (or pause) any '
+                                        'track, then retry.'
+                                    : "Couldn't start playback on Spotify. Check your "
+                                        'connection and retry.',
+                                variant: AppBannerVariant.error,
+                                actionLabel: 'Retry',
+                                actionKey: const Key('retry-playback-button'),
+                                isActionLoading: _isRetryingPlayback,
+                                onAction: _attemptSpotifyPlayback,
+                              ),
+                            ),
+                          if (_tracks.isNotEmpty)
+                            _NowPlayingCard(
+                              key: ValueKey(_currentTrackId),
+                              track: _tracks.first,
+                              hostPlatform: _hostPlatform,
+                              onYouTubeEvent: _handleYouTubePlayerEvent,
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (_tracks.length <= 1)
+                      const SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: Text('Queue is empty', style: TextStyle(color: kTextSecondary)),
                         ),
+                      )
+                    else ...[
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: kSpaceMd,
+                          vertical: kSpaceSm,
+                        ),
+                        sliver: SliverToBoxAdapter(child: _UpNextCard(track: _tracks[1])),
                       ),
-                      const Spacer(),
-                      Text(
-                        '${_tracks.length} tracks',
-                        style: const TextStyle(
-                            color: kTextSecondary, fontSize: 13),
-                      ),
+                      if (_tracks.length > 2) ...[
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: kSpaceMd,
+                            vertical: kSpaceSm,
+                          ),
+                          sliver: SliverToBoxAdapter(
+                            child: Row(
+                              children: [
+                                Text('Up Next', style: kDuskTextTheme.titleMedium),
+                                const Spacer(),
+                                Text(
+                                  // Same count semantics as before — total
+                                  // tracks including the one currently
+                                  // playing, unchanged.
+                                  '${_tracks.length} tracks',
+                                  style: const TextStyle(color: kTextSecondary, fontSize: 13),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        SliverList.builder(
+                          itemCount: _tracks.length - 2,
+                          itemBuilder: (context, i) => _QueueTrackTile(
+                            track: _tracks[i + 2],
+                            position: i + 3,
+                          ),
+                        ),
+                      ],
                     ],
-                  ),
+                  ],
                 ),
-                Expanded(
-                  child: _tracks.length <= 1
-                      ? const Center(
-                          child: Text(
-                            'Queue is empty',
-                            style: TextStyle(color: kTextSecondary),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: _tracks.length - 1,
-                          itemBuilder: (ctx, i) => _QueueTrackTile(
-                            track: _tracks[i + 1],
-                            position: i + 2,
-                          ),
-                        ),
-                ),
-              ],
-            ),
+        ),
+      ),
       bottomNavigationBar: _tracks.isEmpty
           ? null
           : _PlayerControls(
@@ -340,67 +401,10 @@ class _SessionScreenState extends State<SessionScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Spotify real-playback banner — the device-must-be-active constraint is a
-// routine, expected condition (Spotify's Web API can't wake a device from
-// cold), not a rare failure, so this must read as a clear instruction with
-// an easy retry, never a generic/alarming error.
-// ---------------------------------------------------------------------------
-
-class _SpotifyPlaybackBanner extends StatelessWidget {
-  final String status; // 'no_active_device' | 'error'
-  final bool isRetrying;
-  final VoidCallback onRetry;
-
-  const _SpotifyPlaybackBanner({
-    super.key,
-    required this.status,
-    required this.isRetrying,
-    required this.onRetry,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final message = status == 'no_active_device'
-        ? 'Open Spotify on your phone and play (or pause) any track, then retry.'
-        : "Couldn't start playback on Spotify. Check your connection and retry.";
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: kRed.withAlpha(20),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: kRed.withAlpha(80)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.music_off, size: 18, color: kRed),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(message, style: const TextStyle(fontSize: 12.5, color: kTextSecondary)),
-          ),
-          const SizedBox(width: 8),
-          isRetrying
-              ? const SizedBox(
-                  height: 18,
-                  width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: kRed),
-                )
-              : TextButton(
-                  key: const Key('retry-playback-button'),
-                  onPressed: onRetry,
-                  child: const Text('Retry'),
-                ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Queue status banner (Section 7) — replaces a silent empty screen with a
-// concrete explanation of why the queue is short/empty.
+// concrete explanation of why the queue is short/empty. Message-selection
+// logic is unchanged from before this stage; only the container is now the
+// shared AppBanner.
 // ---------------------------------------------------------------------------
 
 class _QueueStatusBanner extends StatelessWidget {
@@ -419,26 +423,7 @@ class _QueueStatusBanner extends StatelessWidget {
             ? 'We found expanded matches ($pct%) because there aren\'t enough '
                 'songs in the connected playlists yet.'
             : "We found fewer matches than usual — the queue will keep updating.";
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: kPrimary.withAlpha(20),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: kPrimary.withAlpha(80)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.info_outline, size: 18, color: kPrimary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(message, style: const TextStyle(fontSize: 12.5, color: kTextSecondary)),
-          ),
-        ],
-      ),
-    );
+    return AppBanner(message: message, variant: AppBannerVariant.info);
   }
 }
 
@@ -448,14 +433,12 @@ class _QueueStatusBanner extends StatelessWidget {
 
 class _NowPlayingCard extends StatelessWidget {
   final Map<String, dynamic> track;
-  final VoidCallback onSkip;
   final String? hostPlatform;
   final ValueChanged<YouTubePlayerEvent>? onYouTubeEvent;
 
   const _NowPlayingCard({
     super.key,
     required this.track,
-    required this.onSkip,
     this.hostPlatform,
     this.onYouTubeEvent,
   });
@@ -466,78 +449,175 @@ class _NowPlayingCard extends StatelessWidget {
     final videoId = track['track_id'] as String?;
 
     return Container(
-      margin: const EdgeInsets.all(16),
+      margin: const EdgeInsets.all(kSpaceMd),
+      padding: const EdgeInsets.all(kSpaceMd),
       decoration: BoxDecoration(
         color: kCardAccent,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(kRadiusLg),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'NOW PLAYING',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: kPrimary,
-                letterSpacing: 1.5,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              track['title'] as String? ?? '',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            Text(
-              track['artist'] as String? ?? '',
-              style: const TextStyle(color: kTextSecondary),
-            ),
-            const SizedBox(height: 16),
-            if (isYouTube && videoId != null && videoId.isNotEmpty) ...[
-              // Real YouTube playback — a persistent, visibly-sized IFrame
-              // Player (see YouTubePlayerWidget's own doc comment on the
-              // IFrame API's on-screen-visibility requirement for autoplay).
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  key: const Key('youtube-player-container'),
-                  height: 200,
-                  child: YouTubePlayerWidget(
-                    key: ValueKey('yt-player-$videoId'),
-                    videoId: videoId,
-                    onEvent: onYouTubeEvent!,
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'NOW PLAYING',
+            style: kDuskTextTheme.labelSmall?.copyWith(color: kPrimary),
+          ),
+          const SizedBox(height: kSpaceSm),
+          if (isYouTube && videoId != null && videoId.isNotEmpty) ...[
+            // Real YouTube playback — a persistent, visibly-sized IFrame
+            // Player (see YouTubePlayerWidget's own doc comment on the
+            // IFrame API's on-screen-visibility requirement for autoplay).
+            // Untouched by this restyle: same Key, same videoId, same
+            // onEvent wiring, same 200px height (unchanged deliberately —
+            // this dimension is part of what keeps the player "visibly
+            // on-screen" per the terms-compliance note; not something to
+            // casually resize during a styling pass).
+            ClipRRect(
+              borderRadius: BorderRadius.circular(kRadiusMd),
+              child: SizedBox(
+                key: const Key('youtube-player-container'),
+                height: 200,
+                width: double.infinity,
+                child: YouTubePlayerWidget(
+                  key: ValueKey('yt-player-$videoId'),
+                  videoId: videoId,
+                  onEvent: onYouTubeEvent!,
                 ),
               ),
-              const SizedBox(height: 8),
-              const Text(
-                'Keep JAM AI open to keep the music playing.',
-                style: TextStyle(fontSize: 11, color: kTextSecondary, fontStyle: FontStyle.italic),
+            ),
+          ] else
+            // Spotify path has no in-app player to embed (native app
+            // controls it) and, per the mockup spec, gets a decorative
+            // placeholder tile instead — this app has no album-art field
+            // anywhere in its data model (confirmed: QueueTrackResponse has
+            // no image/cover URL), so this is a stylistic placeholder, not
+            // a stand-in for real art that merely isn't loaded yet.
+            Container(
+              height: 200,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [kGlowCoral, kPrimaryGradientStart],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(kRadiusMd),
               ),
-            ] else
-              const LinearProgressIndicator(
+              alignment: Alignment.center,
+              child: Text(
+                'cover',
+                style: TextStyle(
+                  color: Colors.white.withAlpha(kAlphaStrong),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 2,
+                ),
+              ),
+            ),
+          const SizedBox(height: kSpaceMd),
+          Text(
+            track['title'] as String? ?? '',
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: kTextPrimary),
+          ),
+          Text(
+            track['artist'] as String? ?? '',
+            style: const TextStyle(color: kTextSecondary),
+          ),
+          const SizedBox(height: kSpaceMd),
+          if (isYouTube && videoId != null && videoId.isNotEmpty)
+            const Text(
+              'Keep JAM AI open to keep the music playing.',
+              style: TextStyle(fontSize: 11, color: kTextSecondary, fontStyle: FontStyle.italic),
+            )
+          else ...[
+            // STILL a static placeholder value (0.35) — deliberately
+            // unchanged, not "fixed" here. The backend never exposes real
+            // Spotify playback position to the frontend: its Spotify
+            // adapter fetches progress_ms internally
+            // (get_current_playback()) but the only caller discards it —
+            // it's never returned from an endpoint or broadcast over the
+            // WebSocket. Making this real would mean adding new
+            // backend/WebSocket data, which this stage's hard constraints
+            // explicitly forbid touching. Restyled visually only.
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: const LinearProgressIndicator(
                 value: 0.35,
+                minHeight: 4,
                 backgroundColor: kSurface,
                 valueColor: AlwaysStoppedAnimation(kPrimary),
               ),
-            const SizedBox(height: 8),
+            ),
+            const SizedBox(height: kSpaceXs),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                const Text('0:00', style: TextStyle(fontSize: 11, color: kTextSecondary)),
                 Text(
-                  'Platform: ${track['platform']}',
-                  style: const TextStyle(fontSize: 12, color: kTextSecondary),
-                ),
-                Text(
-                  'Score: ${((track['weight_score'] as num) * 100).toStringAsFixed(0)}%',
-                  style: const TextStyle(fontSize: 12, color: kPrimary),
+                  _formatDuration(track['duration_ms'] as int? ?? 0),
+                  style: const TextStyle(fontSize: 11, color: kTextSecondary),
                 ),
               ],
             ),
           ],
-        ),
+          const SizedBox(height: kSpaceSm),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Platform: ${track['platform']}',
+                style: const TextStyle(fontSize: 12, color: kTextSecondary),
+              ),
+              Text(
+                'Score: ${((track['weight_score'] as num) * 100).toStringAsFixed(0)}%',
+                style: const TextStyle(fontSize: 12, color: kPrimary),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Up next card — the immediate next track, highlighted (mockup image 7).
+// Same _tracks[1] data as the old flat list's first entry; purely a display
+// split, not a data change. "added by {name}" from the mockup is omitted —
+// no contributor/added-by field exists anywhere in this app's track data.
+// ---------------------------------------------------------------------------
+
+class _UpNextCard extends StatelessWidget {
+  final Map<String, dynamic> track;
+
+  const _UpNextCard({required this.track});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(kSpaceMd),
+      decoration: BoxDecoration(
+        color: kCardSurface,
+        borderRadius: BorderRadius.circular(kRadiusMd),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.graphic_eq, color: kPrimary, size: 20),
+          const SizedBox(width: kSpaceSm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Up next', style: kDuskTextTheme.labelSmall),
+                const SizedBox(height: 2),
+                Text(
+                  track['title'] as String? ?? '',
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: kTextPrimary),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -565,9 +645,9 @@ class _QueueTrackTile extends StatelessWidget {
       ),
       title: Text(
         track['title'] as String? ?? '',
-        style: const TextStyle(fontWeight: FontWeight.bold),
+        style: const TextStyle(fontWeight: FontWeight.bold, color: kTextPrimary),
       ),
-      subtitle: Text(track['artist'] as String? ?? ''),
+      subtitle: Text(track['artist'] as String? ?? '', style: const TextStyle(color: kTextSecondary)),
       trailing: Text(
         _formatDuration(track['duration_ms'] as int? ?? 0),
         style: const TextStyle(color: kTextSecondary, fontSize: 12),
@@ -577,7 +657,14 @@ class _QueueTrackTile extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Player controls
+// Player controls — this app has exactly one real playback-affecting
+// action from here (Skip, to the next track; native Spotify/YouTube
+// playback itself isn't controlled from this app). The mockup's
+// skip-back/play-pause/skip-forward trio doesn't map onto real
+// functionality this app has, so only the one real action is represented —
+// as a prominent circular button, matching the mockup's visual weight for
+// its central control — rather than adding non-functional buttons for
+// capabilities that don't exist. onSkip/onEnd are passed through unchanged.
 // ---------------------------------------------------------------------------
 
 class _PlayerControls extends StatelessWidget {
@@ -589,34 +676,34 @@ class _PlayerControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(20),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
+      color: kBackground,
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          padding: const EdgeInsets.symmetric(horizontal: kSpaceLg, vertical: kSpaceMd),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.skip_next),
-                label: const Text('Skip'),
-                style: ElevatedButton.styleFrom(backgroundColor: kRed),
-                onPressed: onSkip,
+              GestureDetector(
+                onTap: onSkip,
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: kPrimaryGradient),
+                    boxShadow: [
+                      BoxShadow(
+                        color: kPrimaryGradientStart.withAlpha(kAlphaMedium),
+                        blurRadius: 20,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.skip_next, color: Colors.white, size: 32),
+                ),
               ),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.stop_circle_outlined),
-                label: const Text('End JAM'),
-                style: OutlinedButton.styleFrom(foregroundColor: kRed),
-                onPressed: onEnd,
-              ),
+              const SizedBox(height: kSpaceMd),
+              SecondaryButton(label: 'End & export queue', onPressed: onEnd),
             ],
           ),
         ),
