@@ -93,7 +93,17 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
 
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        context.go('/session/${data['id']}');
+        // Stage E: insert the "Your JAM is live" QR-display screen between
+        // creation and the live session — go() (not push), same reasoning
+        // as before: the session already exists server-side, so there's no
+        // safe "back" destination to a form that would resubmit.
+        context.go(
+          '/session/${data['id']}/qr',
+          extra: {
+            'session_code': data['session_code'],
+            'qr_payload': data['qr_payload'],
+          },
+        );
       } else {
         _showError('Failed to create session. Please try again.');
       }

@@ -1,6 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Required for mobile_scanner's in-app QR camera (JoinSessionScreen).
+         mobile_scanner's own plugin manifest already declares this, which
+         Android's manifest merger would pull in automatically — declared
+         explicitly here too so the app's own manifest documents its real
+         permission surface rather than relying on an implicit merge from a
+         dependency. android:required="false" on the feature declaration
+         matches mobile_scanner's own (camera is optional: manual code entry
+         on JoinSessionScreen always works without it). -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="JAM AI"
         android:name="${applicationName}"

@@ -9,6 +9,7 @@ import '../features/auth/screens/youtube_webview_screen.dart';
 import '../features/home/screens/home_screen.dart';
 import '../features/session/screens/create_session_screen.dart';
 import '../features/session/screens/join_session_screen.dart';
+import '../features/session/screens/session_qr_screen.dart';
 import '../features/session/screens/session_screen.dart';
 import '../features/export/screens/export_screen.dart';
 
@@ -67,6 +68,24 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: '/session/create',
       pageBuilder: (context, state) => _slidePage(const CreateSessionScreen()),
+    ),
+    GoRoute(
+      path: '/session/:id/qr',
+      // Reached only via go() from CreateSessionScreen's success handler,
+      // passing session_code/qr_payload through `extra` (go_router's
+      // mechanism for non-URL-encodable data) rather than query params —
+      // qr_payload contains "://" which would need escaping as a query
+      // string. Not part of the jamai:// deep-link scheme.
+      pageBuilder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        return _slidePage(
+          SessionQrScreen(
+            sessionId: state.pathParameters['id']!,
+            sessionCode: extra?['session_code'] as String? ?? '',
+            qrPayload: extra?['qr_payload'] as String? ?? '',
+          ),
+        );
+      },
     ),
     GoRoute(
       path: '/session/join',

@@ -2,9 +2,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../core/auth_service.dart';
 import '../../../core/constants.dart';
+import '../../../core/deep_link_utils.dart';
 import '../../../core/theme.dart';
+import '../../../core/widgets/widgets.dart';
 
 class JoinSessionScreen extends StatefulWidget {
   // Populated when this screen is reached via a jamai://join/{code} deep
@@ -28,18 +31,30 @@ class _JoinSessionScreenState extends State<JoinSessionScreen> {
   bool _loadingPlatform = true;
   String? _selectedPlatform;
 
+  // In-app camera scanner (Stage E) — a second, additional way to arrive at
+  // a join code, alongside manual entry and the pre-existing
+  // jamai://join/{code} OS-level deep link (main.dart). Detected codes are
+  // parsed with the exact same parseJoinCode() the deep-link listener uses
+  // (core/deep_link_utils.dart), and a successful scan calls _joinSession()
+  // — the exact same method the manual "Join" button calls. Neither the
+  // deep-link path nor _joinSession() itself is modified by any of this.
+  late final MobileScannerController _scannerController;
+  bool _isProcessingScan = false;
+
   @override
   void initState() {
     super.initState();
     final prefill = widget.initialCode?.toUpperCase() ?? '';
     _code = prefill;
     _codeController = TextEditingController(text: prefill);
+    _scannerController = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
     _loadSelectedPlatform();
   }
 
   @override
   void dispose() {
     _codeController.dispose();
+    _scannerController.dispose();
     super.dispose();
   }
 
@@ -104,159 +119,225 @@ class _JoinSessionScreenState extends State<JoinSessionScreen> {
     }
   }
 
+  // Parses a scanned barcode's raw content with the exact same
+  // parseJoinCode() the OS-level jamai://join/{code} deep-link listener
+  // uses (main.dart's _handleDeepLink), so both paths agree on what counts
+  // as a valid join code by construction, not by keeping two parsers in
+  // sync by hand. On a valid match, prefills the code field (mirroring
+  // initState's deep-link prefill) and calls _joinSession() — the same
+  // method the manual "Join" button calls, unmodified.
+  Future<void> _handleBarcodeDetected(BarcodeCapture capture) async {
+    if (_isProcessingScan) return;
+
+    for (final barcode in capture.barcodes) {
+      final raw = barcode.rawValue;
+      if (raw == null) continue;
+      final uri = Uri.tryParse(raw);
+      if (uri == null) continue;
+      final code = parseJoinCode(uri);
+      if (code == null) continue;
+
+      setState(() {
+        _isProcessingScan = true;
+        _code = code;
+        _codeController.text = code;
+      });
+      await _scannerController.stop();
+      await _joinSession();
+      if (!mounted) return;
+
+      if (_error != null) {
+        // Join failed (stale/invalid/already-in code, etc.) — restart the
+        // camera so the user can try scanning again rather than stranding
+        // them on a frozen preview; the manual field below still works too.
+        setState(() => _isProcessingScan = false);
+        await _scannerController.start();
+      }
+      break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Join JAM'),
         leading: Navigator.canPop(context)
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
-                onPressed: () => context.pop(),
-              )
+            ? AppBackButton(onPressed: () => context.pop())
             : null,
       ),
-      body: _loadingPlatform
-          ? const Center(child: CircularProgressIndicator(color: kPrimary))
-          : Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.people, size: 64, color: kPrimary),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Enter Session Code',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: kTextPrimary,
-                    ),
+      body: GradientBackground(
+        child: SafeArea(
+          child: _loadingPlatform
+              ? const Center(child: CircularProgressIndicator(color: kPrimary))
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(kSpaceLg),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(kRadiusLg),
+                        child: SizedBox(
+                          key: const Key('qr-scanner-view'),
+                          height: 260,
+                          child: MobileScanner(
+                            controller: _scannerController,
+                            onDetect: _handleBarcodeDetected,
+                            overlayBuilder: (context, constraints) => const _ScannerOverlay(),
+                            errorBuilder: (context, error, child) {
+                              final message =
+                                  error.errorCode == MobileScannerErrorCode.permissionDenied
+                                      ? 'Camera permission denied. Enable it in Settings, '
+                                          'or enter the code below.'
+                                      : 'Camera unavailable. Enter the code below instead.';
+                              return Container(
+                                color: kSurface,
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.all(kSpaceMd),
+                                child: Text(
+                                  message,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: kTextSecondary, fontSize: 13),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: kSpaceSm + 4),
+                      const Text(
+                        "Point at a friend's JAM code",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: kTextSecondary, fontSize: 13),
+                      ),
+                      const SizedBox(height: kSpaceXl),
+                      Center(
+                        child: Text('OR ENTER CODE', style: kDuskTextTheme.labelSmall),
+                      ),
+                      const SizedBox(height: kSpaceMd),
+                      AppTextField.code(
+                        controller: _codeController,
+                        onChanged: (val) => setState(() => _code = val.toUpperCase()),
+                      ),
+                      const SizedBox(height: kSpaceMd),
+                      Center(
+                        child: _selectedPlatform != null
+                            ? PlatformBadge(
+                                platform: _selectedPlatform == 'spotify'
+                                    ? AppPlatform.spotify
+                                    : AppPlatform.youtube,
+                                label: _selectedPlatform == 'spotify'
+                                    ? 'Joining via Spotify'
+                                    : 'Joining via YouTube Music',
+                                compact: true,
+                              )
+                            : NoPlatformConnectedBanner(
+                                textAlign: TextAlign.center,
+                                onConnect: () => context.push('/connect-platform'),
+                              ),
+                      ),
+                      const SizedBox(height: kSpaceLg),
+                      if (_error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: kSpaceMd),
+                          child: AppBanner(message: _error!, variant: AppBannerVariant.error),
+                        ),
+                      PrimaryButton(
+                        label: 'Join',
+                        onPressed: _code.length == 6 && !_isLoading && _selectedPlatform != null
+                            ? _joinSession
+                            : null,
+                        isLoading: _isLoading,
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Ask the host for the 6-character code',
-                    style: TextStyle(fontSize: 14, color: kTextSecondary),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 32),
-                  TextField(
-                    controller: _codeController,
-                    maxLength: 6,
-                    textAlign: TextAlign.center,
-                    textCapitalization: TextCapitalization.characters,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 8,
-                    ),
-                    decoration: const InputDecoration(
-                      hintText: 'XXXXXX',
-                      counterText: '',
-                    ),
-                    onChanged: (val) => setState(() => _code = val.toUpperCase()),
-                  ),
-                  const SizedBox(height: 16),
-                  if (_selectedPlatform != null)
-                    _PlatformBadge(platform: _selectedPlatform!)
-                  else
-                    _NoPlatformConnectedBanner(
-                      onConnect: () => context.push('/connect-platform'),
-                    ),
-                  const SizedBox(height: 24),
-                  if (_error != null)
-                    Text(
-                      _error!,
-                      style: const TextStyle(color: kRed, fontSize: 13),
-                    ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _code.length == 6 && !_isLoading && _selectedPlatform != null
-                        ? _joinSession
-                        : null,
-                    child: _isLoading
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text('Join Session'),
-                  ),
-                ],
-              ),
-            ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Platform badge / no-platform banner (same visual language as CreateSessionScreen)
-// ---------------------------------------------------------------------------
-
-class _PlatformBadge extends StatelessWidget {
-  final String platform;
-
-  const _PlatformBadge({required this.platform});
-
-  @override
-  Widget build(BuildContext context) {
-    final isSpotify = platform == 'spotify';
-    final color = isSpotify ? kGreen : kRed;
-    final label = isSpotify ? 'Joining via Spotify' : 'Joining via YouTube Music';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withAlpha(20),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color, width: 1.5),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 8),
-          Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: color, fontSize: 13)),
-        ],
+                ),
+        ),
       ),
     );
   }
 }
 
-class _NoPlatformConnectedBanner extends StatelessWidget {
-  final VoidCallback onConnect;
+// ---------------------------------------------------------------------------
+// Scanner overlay — purple corner brackets + an animated scan-line glow
+// (mockup image 6's viewfinder aesthetic). Screen-local: only used here.
+// ---------------------------------------------------------------------------
 
-  const _NoPlatformConnectedBanner({required this.onConnect});
+class _ScannerOverlay extends StatefulWidget {
+  const _ScannerOverlay();
+
+  @override
+  State<_ScannerOverlay> createState() => _ScannerOverlayState();
+}
+
+class _ScannerOverlayState extends State<_ScannerOverlay> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 2))
+      ..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: kRed.withAlpha(20),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kRed, width: 1.5),
-      ),
-      child: Column(
-        children: [
-          const Text(
-            "You haven't connected a platform yet.",
-            style: TextStyle(color: kRed, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: onConnect,
-            child: const Text('Connect Spotify or YouTube Music'),
-          ),
-        ],
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) => CustomPaint(
+          painter: _ScannerFramePainter(scanLineProgress: _controller.value),
+          child: const SizedBox.expand(),
+        ),
       ),
     );
   }
+}
+
+class _ScannerFramePainter extends CustomPainter {
+  final double scanLineProgress;
+
+  _ScannerFramePainter({required this.scanLineProgress});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bracketLength = size.shortestSide * 0.12;
+    final bracketPaint = Paint()
+      ..color = kPrimary
+      ..strokeWidth = 4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    void drawCorner(Offset corner, Offset horizontal, Offset vertical) {
+      canvas.drawLine(corner, corner + horizontal, bracketPaint);
+      canvas.drawLine(corner, corner + vertical, bracketPaint);
+    }
+
+    drawCorner(const Offset(0, 0), Offset(bracketLength, 0), Offset(0, bracketLength));
+    drawCorner(Offset(size.width, 0), Offset(-bracketLength, 0), Offset(0, bracketLength));
+    drawCorner(Offset(0, size.height), Offset(bracketLength, 0), Offset(0, -bracketLength));
+    drawCorner(
+      Offset(size.width, size.height),
+      Offset(-bracketLength, 0),
+      Offset(0, -bracketLength),
+    );
+
+    final lineY = size.height * scanLineProgress;
+    final linePaint = Paint()
+      ..shader = LinearGradient(
+        colors: [kPrimary.withAlpha(0), kPrimary, kPrimary.withAlpha(0)],
+      ).createShader(Rect.fromLTWH(0, lineY - 1, size.width, 2));
+    canvas.drawRect(Rect.fromLTWH(0, lineY - 1, size.width, 2), linePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScannerFramePainter oldDelegate) =>
+      oldDelegate.scanLineProgress != scanLineProgress;
 }
