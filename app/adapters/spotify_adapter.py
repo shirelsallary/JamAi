@@ -23,6 +23,21 @@ def _auth_header() -> str:
     return "Basic " + base64.b64encode(creds.encode()).decode()
 
 
+class NoActiveDeviceError(HTTPException):
+    """Raised when Spotify returns 404 (reason NO_ACTIVE_DEVICE) from
+    POST /me/player/queue — the common, expected case where the host has no
+    active Spotify device right now, not a real failure. Subclasses
+    HTTPException (not a plain Exception) for the same reason as
+    SpotifyReauthRequiredError: with_retry's HTTPException branch raises
+    non-429 4xx immediately instead of retrying a state retrying won't fix."""
+
+    def __init__(self):
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error_code": "NO_ACTIVE_DEVICE"},
+        )
+
+
 class SpotifyAdapter:
     def __init__(self, user_id: UUID, access_token: str, refresh_token: str):
         self.user_id = user_id
@@ -374,6 +389,11 @@ class SpotifyAdapter:
                     f"{_API}/me/player/queue",
                     params={"uri": track_uri},
                 )
+                if r.status_code == 404:
+                    # Spotify returns 404 here (same as /play) when there's no
+                    # active device — distinguished from other failures so
+                    # callers can treat it as the common, non-error case.
+                    raise NoActiveDeviceError()
                 r.raise_for_status()
             await with_retry(_call)
 

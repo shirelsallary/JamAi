@@ -19,6 +19,7 @@ than a generic error.
 
 import logging
 
+from app.adapters.spotify_adapter import NoActiveDeviceError
 from app.models.models import Session
 
 logger = logging.getLogger(__name__)
@@ -55,3 +56,52 @@ async def attempt_spotify_playback(adapter, session: Session, track_id: str) -> 
         return {"status": "error", "reason": "PLAYBACK_START_FAILED"}
 
     return {"status": "playing"}
+
+
+async def sync_native_queue(adapter, session: Session, queue_tracks: list) -> dict:
+    """
+    Injects the DNA Agent's picks into Spotify's actual native queue —
+    without this, queue_tracks in our own DB is correct but a user looking
+    at the Spotify app's own Queue view sees nothing beyond whatever
+    attempt_spotify_playback just started. The Web API has no "insert at
+    head" — only POST /me/player/queue, which appends to the end — so a
+    "head of queue" effect only exists because callers already start
+    position 0 directly via start_playback and then call this for the rest.
+
+    queue_tracks: the DB-ordered queue (position 0 = whatever's already
+    playing/being started — never re-added here). Accepts either plain
+    dicts (`resolved`, keyed by "track_id", as _build_initial already has in
+    hand) or QueueTrack ORM rows ordered by position (as queried by _rerank/
+    the /play endpoint) — both are just "the same ordered queue" in whatever
+    shape the caller already had without an extra DB round-trip.
+
+    Adds tracks strictly in order, one at a time (not concurrently) — Spotify
+    appends to its queue in call order, so concurrent calls could arrive out
+    of order. Never raises: a single track's failure is logged and skipped,
+    never stops the rest, and never propagates out to affect DB state —
+    matching attempt_spotify_playback's best-effort contract.
+
+    Returns {"added": <count>, "failed": <count>}.
+    """
+    if session.host_platform != "spotify":
+        return {"added": 0, "failed": 0}
+
+    if adapter is None:
+        return {"added": 0, "failed": 0}
+
+    added = 0
+    failed = 0
+    for track in queue_tracks[1:]:
+        track_id = track["track_id"] if isinstance(track, dict) else track.track_id
+        try:
+            await adapter.add_to_queue(f"spotify:track:{track_id}")
+            added += 1
+        except NoActiveDeviceError:
+            failed += 1
+        except Exception:
+            logger.exception(
+                "add_to_queue failed for track %s in session %s", track_id, session.id
+            )
+            failed += 1
+
+    return {"added": added, "failed": failed}
