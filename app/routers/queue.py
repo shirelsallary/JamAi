@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, WebSocket, WebSocketDisconnect
@@ -17,9 +18,10 @@ from app.services.connection_manager import manager
 from app.services.debounce_service import debouncer
 from app.services.queue_optimizer import optimize_queue, rerank_queue
 from app.services.session_buffer import session_buffer
-from app.services.spotify_playback import attempt_spotify_playback
+from app.services.spotify_playback import attempt_spotify_playback, sync_native_queue
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.websocket("/ws/sessions/{session_id}")
@@ -134,7 +136,20 @@ async def play(
         except NoPlatformConnectedError:
             host_adapter = None
 
-    return await attempt_spotify_playback(host_adapter, session, current_track.track_id)
+    playback_status = await attempt_spotify_playback(host_adapter, session, current_track.track_id)
+
+    if host_adapter is not None:
+        try:
+            all_tracks = await db.execute(
+                select(QueueTrack)
+                .where(QueueTrack.session_id == UUID(session_id))
+                .order_by(QueueTrack.position.asc())
+            )
+            await sync_native_queue(host_adapter, session, list(all_tracks.scalars().all()))
+        except Exception:
+            logger.exception("sync_native_queue failed for session %s", session_id)
+
+    return playback_status
 
 
 @router.get("/queue/{session_id}", response_model=QueueResponse)

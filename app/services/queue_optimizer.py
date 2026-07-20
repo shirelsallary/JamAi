@@ -34,7 +34,7 @@ from app.services.queue_dna_engine import (
 )
 from app.services.session_dna import build_session_dna
 from app.services.social_overlap import social_sort_key
-from app.services.spotify_playback import attempt_spotify_playback
+from app.services.spotify_playback import attempt_spotify_playback, sync_native_queue
 from app.services.track_resolution import resolve_track_for_host_platform
 
 logger = logging.getLogger(__name__)
@@ -187,6 +187,10 @@ async def _build_initial(session_id: str, db, broadcast_fn) -> None:
         playback_status = await attempt_spotify_playback(
             host_adapter, session, resolved[0]["track_id"]
         )
+        try:
+            await sync_native_queue(host_adapter, session, resolved)
+        except Exception:
+            logger.exception("sync_native_queue failed for session %s", session_id)
 
     await broadcast_fn(session_id, {
         "event": "queue_updated",
@@ -241,6 +245,20 @@ async def _rerank(session_id: str, db, broadcast_fn, skipped_track_id: str | Non
     # state it already needs is ready).
     playback_status: dict | None = None
     if session.host_platform == "spotify":
+        # Relocated out of the track_id_before-changed block below --
+        # sync_native_queue needs this regardless of whether that block's
+        # skip-protection ends up calling attempt_spotify_playback at all,
+        # since the queue's composition beyond position 0 can change even
+        # when position 0 doesn't. attempt_spotify_playback's own gating
+        # (track_id_before-changed) is untouched below.
+        host_user = await db.get(User, session.host_user_id)
+        host_adapter = None
+        if host_user is not None:
+            try:
+                host_adapter = get_platform_adapter(host_user)
+            except NoPlatformConnectedError:
+                host_adapter = None
+
         try:
             current = await db.execute(
                 select(QueueTrack)
@@ -249,19 +267,25 @@ async def _rerank(session_id: str, db, broadcast_fn, skipped_track_id: str | Non
             )
             current_track = current.scalar_one_or_none()
             if current_track is not None and current_track.track_id != track_id_before:
-                host_user = await db.get(User, session.host_user_id)
-                host_adapter = None
-                if host_user is not None:
-                    try:
-                        host_adapter = get_platform_adapter(host_user)
-                    except NoPlatformConnectedError:
-                        host_adapter = None
                 playback_status = await attempt_spotify_playback(
                     host_adapter, session, current_track.track_id
                 )
         except Exception:
             logger.exception("Spotify playback attempt failed for session %s", session_id)
             playback_status = {"status": "error", "reason": "PLAYBACK_ATTEMPT_FAILED"}
+
+        # Independent of the above — skip changes queue composition beyond
+        # position 0 on every call, not just when is_current itself changed.
+        if host_adapter is not None:
+            try:
+                reranked = await db.execute(
+                    select(QueueTrack)
+                    .where(QueueTrack.session_id == session.id)
+                    .order_by(QueueTrack.position.asc())
+                )
+                await sync_native_queue(host_adapter, session, list(reranked.scalars().all()))
+            except Exception:
+                logger.exception("sync_native_queue failed for session %s", session_id)
 
     await broadcast_fn(session_id, {
         "event": "queue_updated",
