@@ -218,6 +218,20 @@ async def _rerank(session_id: str, db, broadcast_fn, skipped_track_id: str | Non
     session = await db.get(Session, UUID(session_id))
     if session is None:
         return
+
+    # Captured before rerank_from_candidates deletes/rebuilds the queue_tracks
+    # rows below — the only way to tell afterward whether is_current actually
+    # moved to a different track, or the same track just got reinserted
+    # (skip-protection case). start_playback has no position_ms, so Spotify
+    # restarts a track from 0 on every call — re-issuing it for a track that's
+    # already correctly playing audibly restarts the song for no reason.
+    before_result = await db.execute(
+        select(QueueTrack.track_id)
+        .where(QueueTrack.session_id == session.id, QueueTrack.is_current.is_(True))
+        .limit(1)
+    )
+    track_id_before = before_result.scalar_one_or_none()
+
     status = await rerank_from_candidates(db, session, skipped_track_id=skipped_track_id)
 
     # Best-effort — the DB re-rank above already committed; nothing here may
@@ -234,7 +248,7 @@ async def _rerank(session_id: str, db, broadcast_fn, skipped_track_id: str | Non
                 .limit(1)
             )
             current_track = current.scalar_one_or_none()
-            if current_track is not None:
+            if current_track is not None and current_track.track_id != track_id_before:
                 host_user = await db.get(User, session.host_user_id)
                 host_adapter = None
                 if host_user is not None:
