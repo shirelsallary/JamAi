@@ -22,6 +22,10 @@ class FakeSpotifyAdapter:
         # device" case).
         devices: list[dict] | None = None,
         start_playback_raises: Exception | None = None,
+        # Either a single Exception (raised on every add_to_queue call) or a
+        # list of per-call effects (None = succeed), consumed in call order —
+        # e.g. [Exception("boom"), None] to fail only the first call.
+        add_to_queue_raises: Exception | list[Exception | None] | None = None,
     ):
         self.platform = "spotify"
         self._playlists = playlists or {}
@@ -32,6 +36,8 @@ class FakeSpotifyAdapter:
         self._search_playlists_results = search_playlists_results or []
         self._devices = devices or []
         self._start_playback_raises = start_playback_raises
+        self._add_to_queue_raises = add_to_queue_raises
+        self._add_to_queue_call_count = 0
         self.calls: list[tuple] = []
 
     async def get_user_playlists(self, limit: int = 50):
@@ -68,6 +74,18 @@ class FakeSpotifyAdapter:
         self.calls.append(("start_playback", track_id, device_id))
         if self._start_playback_raises is not None:
             raise self._start_playback_raises
+
+    async def add_to_queue(self, track_uri: str):
+        self.calls.append(("add_to_queue", track_uri))
+        effect = self._add_to_queue_raises
+        if isinstance(effect, list):
+            idx = self._add_to_queue_call_count
+            self._add_to_queue_call_count += 1
+            exc = effect[idx] if idx < len(effect) else None
+            if exc is not None:
+                raise exc
+        elif effect is not None:
+            raise effect
 
 
 class FakeYouTubeAdapter:

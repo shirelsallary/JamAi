@@ -67,6 +67,11 @@ async def test_public_search_track_survives_skip_and_stays_in_candidate_pool(db,
     assert "sp_public" in queue_track_ids
     assert session.queue_build_status == "full"
 
+    # 1b. Fix 3 — sync_native_queue actually ran at the end of _build_initial,
+    # injecting everything beyond position 0 into Spotify's real queue (not
+    # just written to our own DB).
+    assert any(call[0] == "add_to_queue" for call in host_adapter.calls)
+
     # 2. THE ACTUAL REGRESSION CHECK: it was also cached in the candidate pool,
     # not just written straight to the live queue.
     result = await db.execute(
