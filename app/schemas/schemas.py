@@ -47,6 +47,7 @@ class SpotifyAuthorizeResponse(BaseModel):
 class SpotifyExchangeRequest(BaseModel):
     code: str
     state: str
+    code_verifier: str
 
 
 class Token(BaseModel):

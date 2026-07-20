@@ -1,4 +1,3 @@
-import base64
 from urllib.parse import urlencode
 
 import httpx
@@ -29,13 +28,9 @@ _SCOPES = " ".join([
 _ACCOUNTS = "https://accounts.spotify.com"
 
 
-def _auth_header() -> str:
-    creds = f"{settings.SPOTIFY_CLIENT_ID}:{settings.SPOTIFY_CLIENT_SECRET}"
-    return "Basic " + base64.b64encode(creds.encode()).decode()
-
-
 @router.get("/oauth/spotify", response_model=SpotifyAuthorizeResponse)
 async def spotify_login(
+    code_challenge: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -51,6 +46,12 @@ async def spotify_login(
     this user, and returns the authorize URL as JSON for the app to open
     externally. SPOTIFY_REDIRECT_URI must now be the app's deep link
     (jamai://spotify-callback), not a backend URL — see .env.example.
+
+    PKCE fix — `code_challenge` is generated client-side from a random
+    code_verifier (RFC 7636, S256) and passed straight through here; the
+    matching code_verifier travels back through the app (not through this
+    endpoint) and is redeemed in spotify_exchange below. No client_secret
+    is involved anywhere in this flow.
     """
     state = await generate_state(db, current_user, "spotify")
     params = urlencode({
@@ -59,6 +60,8 @@ async def spotify_login(
         "redirect_uri": settings.SPOTIFY_REDIRECT_URI,
         "scope": _SCOPES,
         "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     })
     return SpotifyAuthorizeResponse(authorize_url=f"{_ACCOUNTS}/authorize?{params}")
 
@@ -75,17 +78,22 @@ async def spotify_exchange(
     is received — the user never leaves an authenticated in-app session, so
     this works on the user's very first connection attempt (no chicken-and-egg
     dependency on tokens that don't exist yet).
+
+    PKCE fix — code_verifier (the pre-image of the code_challenge sent to
+    spotify_login above) replaces client_secret as proof of possession; no
+    Authorization/Basic header is sent to Spotify's token endpoint.
     """
     await validate_and_consume_state(db, payload.state, current_user.id, "spotify")
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{_ACCOUNTS}/api/token",
-            headers={"Authorization": _auth_header()},
             data={
                 "grant_type": "authorization_code",
                 "code": payload.code,
                 "redirect_uri": settings.SPOTIFY_REDIRECT_URI,
+                "client_id": settings.SPOTIFY_CLIENT_ID,
+                "code_verifier": payload.code_verifier,
             },
         )
 
