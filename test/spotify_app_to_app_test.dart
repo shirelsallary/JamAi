@@ -146,10 +146,10 @@ void main() {
       await tapConnectAndWait(tester);
 
       expect(find.text('HOME_PLACEHOLDER'), findsOneWidget);
-      expect(
-        lastExchangeBody,
-        jsonEncode({'code': 'auth-code-123', 'state': 'test-state-token'}),
-      );
+
+      final exchangeJson = jsonDecode(lastExchangeBody!) as Map<String, dynamic>;
+      expect(exchangeJson['code'], 'auth-code-123');
+      expect(exchangeJson['state'], 'test-state-token');
     },
   );
 

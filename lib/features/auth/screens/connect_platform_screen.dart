@@ -31,6 +31,11 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   String? _appToAppError;
   String? _pendingAuthorizeUrl;
 
+  // PKCE code_verifier for the in-flight attempt — generated fresh in
+  // _connectSpotify, redeemed by whichever exchange call actually completes
+  // (deep-link callback for the browser path, or _attemptAppToApp).
+  String? _pendingCodeVerifier;
+
   // UI-only — which platform's row shows the connection/selection glow.
   // Not read by any OAuth/deep-link logic below; set synchronously (before
   // any await) at the start of each platform's tap handler so the glow
@@ -105,13 +110,22 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
         return;
       }
 
+      final codeVerifier = _pendingCodeVerifier;
+      if (codeVerifier == null) {
+        // Shouldn't happen — this deep link can only arrive after
+        // _connectSpotify already generated and stored one. Treat as a
+        // failed attempt rather than sending a request PKCE will reject.
+        setState(() => _error = 'Could not complete Spotify connection. Try again.');
+        return;
+      }
+
       final response = await http.post(
         Uri.parse('$kBaseUrl/auth/oauth/spotify/exchange'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
         },
-        body: jsonEncode({'code': code, 'state': state}),
+        body: jsonEncode({'code': code, 'state': state, 'code_verifier': codeVerifier}),
       );
       if (!mounted) return;
 
@@ -164,8 +178,12 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
       // client_id/scope/state/redirect_uri out of it instead of duplicating
       // them client-side, so there is exactly one source of truth for scopes
       // and exactly one (single-use) state token generated per attempt.
+      final pkce = SpotifyPkce.generate();
+      _pendingCodeVerifier = pkce.codeVerifier;
+
       final response = await http.get(
-        Uri.parse('$kBaseUrl/auth/oauth/spotify'),
+        Uri.parse('$kBaseUrl/auth/oauth/spotify')
+            .replace(queryParameters: {'code_challenge': pkce.codeChallenge}),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (!mounted) return;
@@ -266,6 +284,17 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
       return;
     }
 
+    final codeVerifier = _pendingCodeVerifier;
+    if (codeVerifier == null) {
+      // Shouldn't happen — _connectSpotify always generates one before this
+      // method can be reached.
+      setState(() {
+        _isConnecting = false;
+        _appToAppError = 'Could not connect with the Spotify app.';
+      });
+      return;
+    }
+
     try {
       final response = await http.post(
         Uri.parse('$kBaseUrl/auth/oauth/spotify/exchange'),
@@ -276,6 +305,7 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
         body: jsonEncode({
           'code': result.code,
           'state': result.state ?? params.state,
+          'code_verifier': codeVerifier,
         }),
       );
       if (!mounted) return;

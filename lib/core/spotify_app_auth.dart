@@ -1,4 +1,36 @@
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
+
+/// PKCE (RFC 7636, S256) code_verifier/code_challenge pair, generated fresh
+/// per connection attempt. Sent to GET /auth/oauth/spotify (code_challenge)
+/// and later redeemed in POST /auth/oauth/spotify/exchange (code_verifier),
+/// replacing client_secret as proof of possession — see the PKCE fix in
+/// app/routers/spotify.py. Used by both the browser and App-to-App paths,
+/// since both exchange through the same backend endpoint.
+class SpotifyPkce {
+  final String codeVerifier;
+  final String codeChallenge;
+
+  const SpotifyPkce._(this.codeVerifier, this.codeChallenge);
+
+  factory SpotifyPkce.generate() {
+    final verifier = _randomVerifier();
+    final challenge =
+        base64Url.encode(sha256.convert(utf8.encode(verifier)).bytes).replaceAll('=', '');
+    return SpotifyPkce._(verifier, challenge);
+  }
+
+  // 96 random bytes -> 128 base64url chars (no padding, since 96 is a
+  // multiple of 3) — the maximum length RFC 7636 allows (43-128 chars),
+  // maximizing entropy within the spec.
+  static String _randomVerifier() {
+    final bytes = List<int>.generate(96, (_) => Random.secure().nextInt(256));
+    return base64Url.encode(bytes).replaceAll('=', '');
+  }
+}
 
 /// Result of an App-to-App Spotify authorization attempt via the native
 /// bridge in MainActivity.kt (com.spotify.android:auth's AuthorizationClient).
