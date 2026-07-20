@@ -1,7 +1,10 @@
 // App-to-App Spotify auth — covers the three required paths:
-//   1. Spotify app installed, auth succeeds -> code exchanged, navigates home.
-//   2. Spotify app not installed -> App-to-App is never attempted (silent,
-//      routing-only fallback to the existing browser flow — no error shown).
+//   1. Spotify app installed, auth succeeds -> code + PKCE code_verifier
+//      exchanged, navigates home.
+//   2. Spotify app not installed -> hard-blocked with an install dialog;
+//      App-to-App is never attempted and GET /auth/oauth/spotify is never
+//      called at all (no silent browser-flow fallback — see the Bug-2-fix
+//      reversal in connect_platform_screen.dart's _connectSpotify).
 //   3. Spotify app installed, auth fails/cancels -> explicit error with a
 //      manual "Use browser instead" fallback button.
 //
@@ -50,11 +53,13 @@ const _authorizeUrl =
 void main() {
   late HttpServer server;
   String? lastExchangeBody;
+  int authorizeRequestCount = 0;
 
   setUp(() async {
     HttpOverrides.global = null;
     SharedPreferences.setMockInitialValues({'token': 'fake-test-token'});
     lastExchangeBody = null;
+    authorizeRequestCount = 0;
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockStreamHandler(
       _appLinksEventChannel,
@@ -64,6 +69,7 @@ void main() {
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8000);
     server.listen((request) async {
       if (request.uri.path == '/auth/oauth/spotify' && request.method == 'GET') {
+        authorizeRequestCount++;
         request.response.statusCode = 200;
         request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'authorize_url': _authorizeUrl}));
@@ -148,7 +154,7 @@ void main() {
   );
 
   testWidgets(
-    'Spotify app not installed -> App-to-App is never attempted, no error shown',
+    'Spotify app not installed -> hard-blocked with an install dialog, no network call at all',
     (tester) async {
       var authorizeCalled = false;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -166,11 +172,21 @@ void main() {
       await pumpConnectScreen(tester);
       await tapConnectAndWait(tester);
 
+      // Hard block: GET /auth/oauth/spotify is never reached, and App-to-App
+      // is never attempted either — this is not a routing decision to fall
+      // back to the browser flow, it's a dead end until Spotify is installed.
+      expect(authorizeRequestCount, 0);
       expect(authorizeCalled, isFalse);
       expect(lastExchangeBody, isNull);
-      expect(find.text('Could not connect with the Spotify app.'), findsNothing);
-      expect(find.text('Spotify connection was cancelled.'), findsNothing);
+
+      expect(find.text('Spotify not installed'), findsOneWidget);
+      expect(
+        find.text("Spotify isn't installed on this device. Install it to connect."),
+        findsOneWidget,
+      );
+      // No secondary "continue in browser" escape hatch from this dialog.
       expect(find.byKey(const Key('use-browser-instead-button')), findsNothing);
+      expect(find.text('Could not connect with the Spotify app.'), findsNothing);
     },
   );
 

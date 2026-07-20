@@ -17,3 +17,8 @@ String get kBaseUrl =>
 
 String get kWsUrl =>
     kDebugMode ? 'ws://$_localHost:$kLocalBackendPort' : _prodWsUrl;
+
+// Play Store listing opened from the "Spotify not installed" hard block in
+// ConnectPlatformScreen.
+const String kSpotifyPlayStoreUrl =
+    'https://play.google.com/store/apps/details?id=com.spotify.music';

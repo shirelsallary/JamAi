@@ -131,6 +131,19 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
   Future<void> _connectSpotify() async {
     setState(() => _selectedPlatform = AppPlatform.spotify);
 
+    final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+
+    // Hard block, not a routing decision (reversed from the earlier Bug 2
+    // fix's behavior — see spotify_app_to_app_test.dart). Checked before any
+    // network call: the app must never reach GET /oauth/spotify at all when
+    // Spotify isn't installed, and there is no browser fallback from here —
+    // only an "Install Spotify" dialog action.
+    if (isAndroid && !await SpotifyAppAuth.isSpotifyInstalled()) {
+      if (!mounted) return;
+      await _showSpotifyNotInstalledDialog();
+      return;
+    }
+
     final token = await AuthService.getToken();
     if (!mounted) return;
     if (token == null) {
@@ -164,14 +177,9 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
       final authorizeUrlString = data['authorize_url'] as String;
       _pendingAuthorizeUrl = authorizeUrlString;
 
-      // Not-installed is a routing decision, not a failure — falls straight
-      // through to the existing browser flow below with no user-facing
-      // difference. Only an App-to-App attempt that actually starts (Spotify
-      // installed) and then fails/is cancelled shows an explicit error.
-      final useAppToApp = defaultTargetPlatform == TargetPlatform.android &&
-          await SpotifyAppAuth.isSpotifyInstalled();
-
-      if (useAppToApp) {
+      // isAndroid here already implies Spotify is installed — the hard
+      // block above returned early otherwise.
+      if (isAndroid) {
         final params = SpotifyAuthorizeParams.fromAuthorizeUrl(authorizeUrlString);
         if (params != null) {
           await _attemptAppToApp(token, params);
@@ -194,6 +202,31 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _showSpotifyNotInstalledDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Spotify not installed'),
+        content: const Text(
+          "Spotify isn't installed on this device. Install it to connect.",
+        ),
+        actions: [
+          TextButton(
+            key: const Key('install-spotify-button'),
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              launchUrl(
+                Uri.parse(kSpotifyPlayStoreUrl),
+                mode: LaunchMode.externalApplication,
+              );
+            },
+            child: const Text('Install Spotify'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _openAuthorizeUrlInBrowser(String authorizeUrlString) async {
