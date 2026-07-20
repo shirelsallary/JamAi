@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.routers.queue import get_queue
 from app.services.spotify_playback import attempt_spotify_playback
-from app.models.models import QueueTrack, SessionCandidateTrack, SessionParticipant
+from app.models.models import QueueTrack, SessionCandidateTrack, SessionParticipant, User
 from app.services.auth_service import register_user
 from app.services.queue_optimizer import _rerank
 from app.services.session_service import create_session
@@ -250,6 +250,45 @@ async def test_rerank_db_update_unaffected_by_spotify_host_resolution_failure(db
     assert len(broadcasts) == 1
     assert broadcasts[0]["queue_build_status"] is not None
     assert broadcasts[0]["playback_status"]["status"] == "error"
+
+
+async def test_rerank_survives_db_get_failure_during_host_user_lookup(db, monkeypatch):
+    """Regression guard: host_user = await db.get(User, ...) must never
+    escape _rerank uncaught. It briefly did after Fix 3 relocated the host
+    adapter resolution out of the track_id_before-changed block — the
+    db.get(User, ...) call ended up sitting before any try/except at all,
+    so a failure there would propagate out of _rerank entirely and skip
+    broadcast_fn for that skip, violating the exact invariant this
+    function's own comments describe ("nothing here may ever prevent the
+    queue_updated broadcast from firing"). Distinct from the sibling test
+    above, which forces the failure inside get_platform_adapter (decrypt),
+    not inside the host_user db.get() lookup itself."""
+    session, host = await _seeded_session(db)
+    result = await db.execute(select(QueueTrack).where(QueueTrack.session_id == session.id))
+    current = next(t for t in result.scalars().all() if t.is_current)
+
+    real_get = db.get
+
+    async def flaky_get(model, ident, *args, **kwargs):
+        if model is User:
+            raise RuntimeError("DB connection dropped")
+        return await real_get(model, ident, *args, **kwargs)
+
+    monkeypatch.setattr(db, "get", flaky_get)
+
+    broadcasts = []
+    async def capture_broadcast(session_id, message):
+        broadcasts.append(message)
+
+    # Must not raise, despite the failure inside the host_user lookup.
+    await _rerank(str(session.id), db, capture_broadcast, skipped_track_id=str(current.id))
+
+    assert len(broadcasts) == 1
+    assert broadcasts[0]["queue_build_status"] is not None
+
+    playback_status = broadcasts[0]["playback_status"]
+    assert playback_status is not None
+    assert playback_status["status"] == "error"
 
 
 async def test_get_queue_response_includes_host_platform(db):

@@ -245,19 +245,30 @@ async def _rerank(session_id: str, db, broadcast_fn, skipped_track_id: str | Non
     # state it already needs is ready).
     playback_status: dict | None = None
     if session.host_platform == "spotify":
-        # Relocated out of the track_id_before-changed block below --
+        # Relocated out of the track_id_before-changed block below (Fix 3) —
         # sync_native_queue needs this regardless of whether that block's
         # skip-protection ends up calling attempt_spotify_playback at all,
         # since the queue's composition beyond position 0 can change even
         # when position 0 doesn't. attempt_spotify_playback's own gating
         # (track_id_before-changed) is untouched below.
-        host_user = await db.get(User, session.host_user_id)
         host_adapter = None
-        if host_user is not None:
-            try:
+        try:
+            # host_user lookup lives in the same try as get_platform_adapter
+            # below — both must fail into the same except Exception, exactly
+            # like the old outer try/except this whole block was relocated
+            # out of (see Bug: db.get failing here used to be caught by that
+            # outer except and never blocked broadcast_fn below; moving it
+            # to a bare, unguarded line briefly regressed that).
+            host_user = await db.get(User, session.host_user_id)
+            if host_user is not None:
                 host_adapter = get_platform_adapter(host_user)
-            except NoPlatformConnectedError:
-                host_adapter = None
+        except NoPlatformConnectedError:
+            host_adapter = None
+        except Exception:
+            logger.exception(
+                "Spotify host adapter resolution failed for session %s", session_id
+            )
+            host_adapter = None
 
         try:
             current = await db.execute(
