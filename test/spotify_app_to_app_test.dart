@@ -36,6 +36,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -53,12 +54,14 @@ const _authorizeUrl =
 void main() {
   late HttpServer server;
   String? lastExchangeBody;
+  String? lastAuthorizeCodeChallenge;
   int authorizeRequestCount = 0;
 
   setUp(() async {
     HttpOverrides.global = null;
     SharedPreferences.setMockInitialValues({'token': 'fake-test-token'});
     lastExchangeBody = null;
+    lastAuthorizeCodeChallenge = null;
     authorizeRequestCount = 0;
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockStreamHandler(
@@ -70,6 +73,7 @@ void main() {
     server.listen((request) async {
       if (request.uri.path == '/auth/oauth/spotify' && request.method == 'GET') {
         authorizeRequestCount++;
+        lastAuthorizeCodeChallenge = request.uri.queryParameters['code_challenge'];
         request.response.statusCode = 200;
         request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'authorize_url': _authorizeUrl}));
@@ -150,6 +154,15 @@ void main() {
       final exchangeJson = jsonDecode(lastExchangeBody!) as Map<String, dynamic>;
       expect(exchangeJson['code'], 'auth-code-123');
       expect(exchangeJson['state'], 'test-state-token');
+
+      // PKCE round-trip — the code_verifier sent to the exchange call must
+      // hash (S256) to the same code_challenge sent earlier when requesting
+      // the authorize URL, and no client_secret-equivalent is involved.
+      final verifier = exchangeJson['code_verifier'] as String;
+      expect(verifier, isNotEmpty);
+      final expectedChallenge =
+          base64Url.encode(sha256.convert(utf8.encode(verifier)).bytes).replaceAll('=', '');
+      expect(lastAuthorizeCodeChallenge, expectedChallenge);
     },
   );
 
