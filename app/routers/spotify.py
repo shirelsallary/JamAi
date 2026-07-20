@@ -16,13 +16,17 @@ from app.services.token_encryption import encrypt_token
 router = APIRouter()
 
 _SCOPES = " ".join([
-    "user-read-private",
-    "user-read-email",
-    "user-top-read",
+    "playlist-read-public",
+    # Needed for scan_saved_playlists (GET /me/playlists) to see the user's
+    # own private playlists, not just public ones.
     "playlist-read-private",
+    # Beyond the minimal auth-flow scope set — playlist_service.py's
+    # create_playlist (export feature) does POST /me/playlists with
+    # "public": True, which Spotify requires this scope for. Omitting it
+    # would break playlist export for any newly-connected/reconnected user.
     "playlist-modify-public",
-    "user-modify-playback-state",
     "user-read-playback-state",
+    "user-modify-playback-state",
 ])
 
 _ACCOUNTS = "https://accounts.spotify.com"
