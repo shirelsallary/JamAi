@@ -41,7 +41,11 @@ async def _register_and_login(client, email="exchange1@jam.com"):
 
 
 async def _get_authorize_state(client, headers) -> str:
-    r = await client.get("/auth/oauth/spotify", headers=headers)
+    r = await client.get(
+        "/auth/oauth/spotify",
+        headers=headers,
+        params={"code_challenge": "test-code-challenge"},
+    )
     assert r.status_code == 200
     authorize_url = r.json()["authorize_url"]
     query = parse_qs(urlparse(authorize_url).query)
@@ -63,7 +67,7 @@ async def test_exchange_stores_encrypted_tokens_for_user_with_no_prior_platform_
     r = await client.post(
         "/auth/oauth/spotify/exchange",
         headers=headers,
-        json={"code": "auth-code-123", "state": state},
+        json={"code": "auth-code-123", "state": state, "code_verifier": "test-code-verifier"},
     )
     assert r.status_code == 200
     assert r.json()["message"] == "Spotify connected successfully"
@@ -87,7 +91,7 @@ async def test_exchange_rejects_invalid_state(client, monkeypatch):
     r = await client.post(
         "/auth/oauth/spotify/exchange",
         headers=headers,
-        json={"code": "auth-code-123", "state": "bogus-state"},
+        json={"code": "auth-code-123", "state": "bogus-state", "code_verifier": "test-code-verifier"},
     )
     assert r.status_code == 400
 
@@ -105,6 +109,6 @@ async def test_exchange_surfaces_spotify_token_endpoint_failure(client, monkeypa
     r = await client.post(
         "/auth/oauth/spotify/exchange",
         headers=headers,
-        json={"code": "bad-code", "state": state},
+        json={"code": "bad-code", "state": state, "code_verifier": "test-code-verifier"},
     )
     assert r.status_code == 400
