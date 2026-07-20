@@ -164,6 +164,58 @@ async def test_rerank_resolves_host_adapter_not_caller(db, monkeypatch):
     assert any(call[0] == "start_playback" for call in fake.calls)
 
 
+async def test_rerank_skips_start_playback_when_current_track_unchanged(db, monkeypatch):
+    """A rerank that does NOT change is_current (e.g. a guest joining while
+    the existing top track's score still wins, or a bare reconnect) must not
+    re-issue start_playback — Spotify's PUT /me/player/play has no
+    position_ms, so re-issuing it for a track that's already correctly
+    playing would audibly restart it from 0 for no reason."""
+    session, host = await _seeded_session(db)
+
+    fake = FakeSpotifyAdapter(devices=[{"id": "dev1", "is_active": True}])
+    monkeypatch.setattr("app.services.queue_optimizer.get_platform_adapter", lambda user: fake)
+
+    broadcasts = []
+    async def broadcast(session_id, message):
+        broadcasts.append(message)
+
+    # skipped_track_id=None => skip-protection reinserts the same "current"
+    # track from _seeded_session unchanged (no skip happened).
+    await _rerank(str(session.id), db, broadcast, skipped_track_id=None)
+
+    result = await db.execute(select(QueueTrack).where(QueueTrack.session_id == session.id))
+    current_after = next(t for t in result.scalars().all() if t.is_current)
+    assert current_after.track_id == "current"  # unchanged by this rerank
+
+    assert not any(call[0] == "start_playback" for call in fake.calls)
+    assert broadcasts[0]["playback_status"] is None
+
+
+async def test_rerank_calls_start_playback_when_current_track_changes(db, monkeypatch):
+    """A skip that promotes a genuinely new track to is_current must still
+    re-issue start_playback — the unchanged-track fix above must not regress
+    this, the actual mechanism by which a skip reaches the real device."""
+    session, host = await _seeded_session(db)
+    result = await db.execute(select(QueueTrack).where(QueueTrack.session_id == session.id))
+    current = next(t for t in result.scalars().all() if t.is_current)
+
+    fake = FakeSpotifyAdapter(devices=[{"id": "dev1", "is_active": True}])
+    monkeypatch.setattr("app.services.queue_optimizer.get_platform_adapter", lambda user: fake)
+
+    broadcasts = []
+    async def broadcast(session_id, message):
+        broadcasts.append(message)
+
+    await _rerank(str(session.id), db, broadcast, skipped_track_id=str(current.id))
+
+    result = await db.execute(select(QueueTrack).where(QueueTrack.session_id == session.id))
+    current_after = next(t for t in result.scalars().all() if t.is_current)
+    assert current_after.track_id != "current"  # a new track was promoted
+
+    assert any(call[0] == "start_playback" for call in fake.calls)
+    assert broadcasts[0]["playback_status"] == {"status": "playing"}
+
+
 async def test_rerank_db_update_unaffected_by_spotify_host_resolution_failure(db):
     """Cross-cutting requirement: any failure in the real-playback attempt —
     including a broken/malformed stored token (decrypt failure, not just
