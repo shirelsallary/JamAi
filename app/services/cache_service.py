@@ -4,6 +4,7 @@ AUDIO_FEATURES_TTL = 86400   # 24 hours — track audio features never change
 TOP_TRACKS_TTL = 3600        # 1 hour
 RECOMMENDATIONS_TTL = 300    # 5 minutes
 CURRENT_PLAYBACK_TTL = 0     # never cache — real-time data
+MOOD_CATEGORIES_TTL = 86400  # 24 hours — YouTube's "Moods & Genres" taxonomy barely changes
 
 
 class CacheService:

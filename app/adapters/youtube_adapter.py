@@ -4,10 +4,54 @@ from functools import partial
 from uuid import UUID
 
 from ytmusicapi import YTMusic
+from ytmusicapi.navigation import CAROUSEL_CONTENTS, GRID_ITEMS, MTRIR, SECTION_LIST, SINGLE_COLUMN_TAB, nav
+from ytmusicapi.parsers.browsing import parse_playlist
 
-from app.services.cache_service import cache, TOP_TRACKS_TTL, RECOMMENDATIONS_TTL
-from app.services.mood_to_audio_features import infer_genres_from_playlist_name
+from app.services.cache_service import cache, MOOD_CATEGORIES_TTL, TOP_TRACKS_TTL, RECOMMENDATIONS_TTL
+from app.services.mood_to_audio_features import (
+    GENRE_EXPANSION_MAP,
+    GENRE_TO_YT_CATEGORY,
+    MOOD_TO_YT_CATEGORY,
+    infer_genres_from_playlist_name,
+)
 from app.services.retry_handler import with_retry
+
+
+def _parse_mood_playlists_defensive(response: dict) -> list[dict]:
+    """Reimplements ytmusicapi's own YTMusic.get_mood_playlists() body, but
+    skips un-parseable carousel items instead of letting the whole call raise.
+
+    Verified live (2026-07-21, ytmusicapi 1.12.1): "Moods & moments" category
+    pages (e.g. "Chill", "Energize") parse fine with the library's own
+    get_mood_playlists(). "Genres" category pages (e.g. "Pop", "Hip-hop") do
+    not — they lead with a "Top songs" carousel whose items aren't playlist
+    tiles (musicResponsiveListItemRenderer instead of musicTwoRowItemRenderer,
+    or a musicTwoRowItemRenderer song tile with no navigationEndpoint), which
+    crashes parse_content_list/parse_playlist with a KeyError before any
+    playlist from ANY section is returned — including the real playlist
+    carousels further down the same page. Since we need Genres (not just
+    Moods) for get_mood_genre_playlists below, skip bad items per-item rather
+    than letting one bad carousel discard an entire category's results.
+    """
+    playlists: list[dict] = []
+    for section in nav(response, SINGLE_COLUMN_TAB + SECTION_LIST):
+        path: list = []
+        if "gridRenderer" in section:
+            path = GRID_ITEMS
+        elif "musicCarouselShelfRenderer" in section:
+            path = CAROUSEL_CONTENTS
+        elif "musicImmersiveCarouselShelfRenderer" in section:
+            path = ["musicImmersiveCarouselShelfRenderer", "contents"]
+        if not path:
+            continue
+        for item in nav(section, path):
+            if MTRIR not in item:
+                continue
+            try:
+                playlists.append(parse_playlist(item[MTRIR]))
+            except (KeyError, IndexError, TypeError):
+                continue
+    return playlists
 
 
 def _build_browser_auth_json(raw_cookie: str) -> str:
@@ -155,6 +199,105 @@ class YouTubeAdapter:
             for item in (items or [])
             if item.get("browseId")
         ]
+
+    async def _get_mood_categories_cached(self) -> dict:
+        """get_mood_categories() — YouTube's full "Moods & Genres" taxonomy.
+        Global (not per-user) cache key: this is public, account-independent
+        data, and barely changes, hence the day-long TTL."""
+        cache_key = "yt_mood_categories"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = await with_retry(lambda: _run_sync(self.yt.get_mood_categories))
+        cache.set(cache_key, result or {}, MOOD_CATEGORIES_TTL)
+        return result or {}
+
+    async def _get_mood_playlists_cached(self, params: str) -> list[dict]:
+        """get_mood_playlists(params) via _parse_mood_playlists_defensive (see
+        its docstring for why we don't call ytmusicapi's own get_mood_playlists
+        directly). Cached per-category at the same TTL as other playlist
+        listings (get_user_playlists/get_playlist_tracks use TOP_TRACKS_TTL)."""
+        cache_key = f"yt_mood_playlists:{params}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        response = await with_retry(
+            lambda: _run_sync(
+                self.yt._send_request,
+                "browse",
+                {"browseId": "FEmusic_moods_and_genres_category", "params": params},
+            )
+        )
+        result = _parse_mood_playlists_defensive(response or {})
+        cache.set(cache_key, result, TOP_TRACKS_TTL)
+        return result
+
+    async def get_mood_genre_playlists(self, mood: str | None, genre: str | None) -> list[dict]:
+        """
+        Section 4 official source — YouTube Music's own "Moods & Genres"
+        taxonomy, tried by chain_public_playlist_search before its existing
+        free-text search_playlists() fallback (not instead of it).
+
+        Looks up the real YouTube category matching `genre` (GENRE_TO_YT_CATEGORY)
+        and, separately, the one matching `mood` (MOOD_TO_YT_CATEGORY), fetching
+        playlists from whichever map, deduped by playlist_id. Genre-category
+        hits carry a deterministic "source_genres" (GENRE_EXPANSION_MAP's own
+        expansion for that genre — the same list session_dna.py uses to build
+        target_genres, so it's a guaranteed, not inferred, match). Mood-category
+        hits carry source_genres=None — a YouTube mood like "Energize" isn't a
+        genre, so there's nothing certain to assign; those tracks keep relying
+        on infer_genres_from_playlist_name downstream, same as before this change.
+
+        Returns [] (never raises) if the category lookup fails or neither
+        mood nor genre maps to a known YouTube category — chain_public_playlist_search
+        falls back to its existing search_playlists() path in that case.
+        """
+        try:
+            categories = await self._get_mood_categories_cached()
+        except Exception:
+            return []
+
+        title_to_params: dict[str, str] = {}
+        for section_items in categories.values():
+            for item in section_items:
+                title = item.get("title")
+                params = item.get("params")
+                if title and params:
+                    title_to_params[title.lower()] = params
+
+        results: list[dict] = []
+        seen_ids: set[str] = set()
+
+        genre_category = GENRE_TO_YT_CATEGORY.get(genre or "")
+        params = title_to_params.get(genre_category.lower()) if genre_category else None
+        if params:
+            try:
+                playlists = await self._get_mood_playlists_cached(params)
+            except Exception:
+                playlists = []
+            source_genres = GENRE_EXPANSION_MAP.get(genre, [genre.lower()]) if genre else None
+            for pl in playlists:
+                pid = pl.get("playlistId")
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
+                    results.append(
+                        {"playlist_id": pid, "name": pl.get("title", ""), "source_genres": source_genres}
+                    )
+
+        mood_category = MOOD_TO_YT_CATEGORY.get(mood or "")
+        params = title_to_params.get(mood_category.lower()) if mood_category else None
+        if params:
+            try:
+                playlists = await self._get_mood_playlists_cached(params)
+            except Exception:
+                playlists = []
+            for pl in playlists:
+                pid = pl.get("playlistId")
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
+                    results.append({"playlist_id": pid, "name": pl.get("title", ""), "source_genres": None})
+
+        return results
 
     async def search_tracks(self, query: str, limit: int = 20) -> list:
         items = await with_retry(

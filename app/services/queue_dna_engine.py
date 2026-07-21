@@ -165,6 +165,53 @@ def _dedupe_by_normalized_key(tracks: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
+async def _score_playlist_tracks(
+    playlist_id: str,
+    host_adapter,
+    host_platform: str,
+    dna: dict,
+    have_keys: set[str],
+    min_threshold: float,
+    genre_override: list[str] | None = None,
+) -> list[dict]:
+    """Fetch one playlist's tracks and score each against dna, returning the
+    accepted candidates (also adding their keys to have_keys in place, so
+    later playlists in the same chain don't re-accept a duplicate track).
+
+    genre_override, when given, replaces each track's inferred/enriched genres
+    with a deterministic list — used for playlists sourced from
+    YouTubeAdapter.get_mood_genre_playlists' Genre-category match, where the
+    genre is certain rather than guessed (see that function's docstring)."""
+    tracks = await host_adapter.get_playlist_tracks(playlist_id)
+    enrichment = await _enrich_with_features_and_genres(host_adapter, tracks)
+    accepted: list[dict] = []
+    for t in tracks:
+        key = normalize_key(t["title"], t["artist"])
+        if key in have_keys:
+            continue
+        extra = enrichment.get(t["track_id"], {})
+        genres = genre_override if genre_override is not None else extra.get("genres", [])
+        candidate = {
+            "track_id": t["track_id"],
+            "platform": host_platform,
+            "title": t["title"],
+            "artist": t["artist"],
+            "duration_ms": t["duration_ms"],
+            "valence": extra.get("valence"),
+            "energy": extra.get("energy"),
+            "genres": genres,
+            "normalized_track_key": key,
+            "normalized_artist_key": normalize_key("", t["artist"]),
+        }
+        result = compute_match_score(candidate, dna)
+        if result["score"] >= min_threshold:
+            candidate["match_score"] = result["score"]
+            candidate["confidence"] = result["confidence"]
+            accepted.append(candidate)
+            have_keys.add(key)
+    return accepted
+
+
 async def chain_public_playlist_search(
     dna: dict,
     host_platform: str,
@@ -175,21 +222,55 @@ async def chain_public_playlist_search(
     target_size: int,
 ) -> list[dict]:
     """Section 4 — always searches host_platform only (never worth resolving a
-    public-search hit found on a different platform)."""
+    public-search hit found on a different platform).
+
+    For a YouTube host, first tries YouTubeAdapter.get_mood_genre_playlists —
+    YouTube Music's own "Moods & Genres" taxonomy, an official/curated source
+    rather than a free-text guess — and only falls back to the existing
+    free-text search_playlists() chain below if that didn't fill target_size.
+    Spotify hosts (and any adapter without get_mood_genre_playlists) skip
+    straight to the free-text chain, unchanged."""
     have_keys = {t["normalized_track_key"] for t in already_have}
 
     genre = dna.get("raw_genre") or ""
     mood = dna.get("raw_mood") or ""
     language = dna.get("target_language") or ""
+
+    found: list[dict] = []
+    queries_used = 0
+
+    if host_platform == "youtube" and hasattr(host_adapter, "get_mood_genre_playlists"):
+        try:
+            official_playlists = await host_adapter.get_mood_genre_playlists(mood, genre)
+        except Exception:
+            logger.exception("official mood/genre playlist lookup failed (mood=%r genre=%r)", mood, genre)
+            official_playlists = []
+
+        for playlist in official_playlists:
+            if queries_used >= max_queries or len(already_have) + len(found) >= target_size:
+                break
+            queries_used += 1
+            try:
+                accepted = await _score_playlist_tracks(
+                    playlist["playlist_id"],
+                    host_adapter,
+                    host_platform,
+                    dna,
+                    have_keys,
+                    min_threshold,
+                    genre_override=playlist.get("source_genres"),
+                )
+            except Exception:
+                logger.exception("failed fetching official playlist %s", playlist["playlist_id"])
+                continue
+            found.extend(accepted)
+
     keyword_combos = [
         " ".join(p for p in [genre, mood, language] if p),
         " ".join(p for p in [genre, mood] if p),
         mood,
     ]
     keyword_combos = [k for k in dict.fromkeys(keyword_combos) if k.strip()]
-
-    found: list[dict] = []
-    queries_used = 0
 
     for keyword in keyword_combos:
         if queries_used >= max_queries or len(already_have) + len(found) >= target_size:
@@ -207,35 +288,13 @@ async def chain_public_playlist_search(
                 break
             queries_used += 1
             try:
-                tracks = await host_adapter.get_playlist_tracks(playlist["playlist_id"])
+                accepted = await _score_playlist_tracks(
+                    playlist["playlist_id"], host_adapter, host_platform, dna, have_keys, min_threshold
+                )
             except Exception:
                 logger.exception("failed fetching public playlist %s", playlist["playlist_id"])
                 continue
-
-            enrichment = await _enrich_with_features_and_genres(host_adapter, tracks)
-            for t in tracks:
-                key = normalize_key(t["title"], t["artist"])
-                if key in have_keys:
-                    continue
-                extra = enrichment.get(t["track_id"], {})
-                candidate = {
-                    "track_id": t["track_id"],
-                    "platform": host_platform,
-                    "title": t["title"],
-                    "artist": t["artist"],
-                    "duration_ms": t["duration_ms"],
-                    "valence": extra.get("valence"),
-                    "energy": extra.get("energy"),
-                    "genres": extra.get("genres", []),
-                    "normalized_track_key": key,
-                    "normalized_artist_key": normalize_key("", t["artist"]),
-                }
-                result = compute_match_score(candidate, dna)
-                if result["score"] >= min_threshold:
-                    candidate["match_score"] = result["score"]
-                    candidate["confidence"] = result["confidence"]
-                    found.append(candidate)
-                    have_keys.add(key)
+            found.extend(accepted)
 
             if len(already_have) + len(found) >= target_size:
                 break

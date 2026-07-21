@@ -22,6 +22,43 @@ GENRE_EXPANSION_MAP: dict[str, list[str]] = {
     "Classical": ["classical", "orchestral", "baroque"],
 }
 
+# Our genre/mood picks (Create JAM form) -> the real category titles YouTube
+# Music's own "Moods & Genres" taxonomy exposes via ytmusicapi's
+# get_mood_categories() (see YouTubeAdapter.get_mood_genre_playlists). Verified
+# against a live, unauthenticated get_mood_categories() call on 2026-07-21
+# against ytmusicapi 1.12.1 — these are the actual category titles returned,
+# not guessed. Titles are matched case-insensitively downstream, so the exact
+# case here is cosmetic.
+#
+# GENRE_TO_YT_CATEGORY maps to YouTube's "Genres" section. Most of our 8 picks
+# have a direct or near-exact match; two aren't 1:1 by name:
+#   R&B -> "R&B & soul" (YouTube merges R&B and soul into one category)
+#   Electronic -> "Dance & electronic" (YouTube has no bare "Electronic" entry)
+GENRE_TO_YT_CATEGORY: dict[str, str] = {
+    "Pop": "Pop",
+    "Hip-Hop": "Hip-hop",
+    "Rock": "Rock",
+    "Jazz": "Jazz",
+    "R&B": "R&B & soul",
+    "Latin": "Latin",
+    "Electronic": "Dance & electronic",
+    "Classical": "Classical",
+}
+
+# MOOD_TO_YT_CATEGORY maps to YouTube's "Moods & moments" section. None of
+# YouTube's mood titles are literal genres, so tracks sourced via this path
+# do NOT get a deterministic genres tag the way GENRE_TO_YT_CATEGORY hits do
+# (see get_mood_genre_playlists) — "Energize" isn't a genre any more than
+# "Energetic" is, so there's nothing certain to assign.
+MOOD_TO_YT_CATEGORY: dict[str, str] = {
+    "Energetic": "Energize",
+    "Chill": "Chill",
+    "Happy": "Feel good",
+    "Sad": "Sad",
+    "Romantic": "Romance",
+    "Focus": "Focus",
+}
+
 # mood -> target valence/energy (Section 1)
 MOOD_AUDIO_MAP: dict[str, dict[str, float]] = {
     "Energetic": {"valence": 0.8, "energy": 0.85},

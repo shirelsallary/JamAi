@@ -9,9 +9,12 @@ from app.services.queue_dna_engine import (
 )
 from app.services.session_dna import build_session_dna
 from app.services.social_overlap import normalize_key
-from tests.unit.fakes import FakeSpotifyAdapter, make_track
+from tests.unit.fakes import FakeSpotifyAdapter, FakeYouTubeAdapter, make_track
 
 _DNA = build_session_dna({"genre": "Pop", "mood": "Chill", "language": None, "time": "Afternoon"})
+
+# genre="Pop", mood="Energetic" — the exact example the task asked for.
+_YT_DNA = build_session_dna({"genre": "Pop", "mood": "Energetic", "language": None, "time": "Afternoon"})
 
 
 def _candidate(track_id, score, title=None, artist="Artist"):
@@ -104,6 +107,109 @@ async def test_partial_status_when_insufficient_matches_even_after_public_search
     final = accepted + extra
     assert len(final) < 20
     assert len(final) >= 1  # not silently emptied out — the one match found is kept
+
+
+# ---------------------------------------------------------------------------
+# chain_public_playlist_search — YouTube official mood/genre source, tried
+# before the existing free-text search_playlists() fallback
+# ---------------------------------------------------------------------------
+
+async def test_official_source_tried_first_for_youtube_host_and_skips_text_search_when_sufficient():
+    official_playlists = [
+        {"playlist_id": "official_pop_1", "name": "Pop Hits", "source_genres": ["pop", "dance pop", "electropop"]},
+    ]
+    tracks = [make_track(f"pop{i}", f"Pop Song {i}", "Pop Artist") for i in range(10)]
+    adapter = FakeYouTubeAdapter(
+        playlists={"official_pop_1": tracks},
+        mood_genre_playlists_results=official_playlists,
+        search_playlists_results=[{"playlist_id": "should_not_be_used", "name": "x"}],
+    )
+
+    found = await chain_public_playlist_search(
+        _YT_DNA, "youtube", adapter, already_have=[],
+        min_threshold=0.0, max_queries=MAX_PUBLIC_SEARCH_QUERIES, target_size=5,
+    )
+
+    assert ("get_mood_genre_playlists", "Energetic", "Pop") in adapter.calls
+    assert len(found) >= 5
+    # Official playlist's deterministic genres, not infer_genres_from_playlist_name.
+    assert all(t["genres"] == ["pop", "dance pop", "electropop"] for t in found)
+    # Target already reached from the official source — text search never runs.
+    assert not any(c[0] == "search_playlists" for c in adapter.calls)
+
+
+async def test_falls_back_to_text_search_when_official_source_is_empty():
+    fallback_playlist = [{"playlist_id": "text_search_hit", "name": "some pop playlist"}]
+    tracks = [make_track("fallback1", "Fallback Song", "Some Artist")]
+    adapter = FakeYouTubeAdapter(
+        playlists={"text_search_hit": tracks},
+        mood_genre_playlists_results=[],  # official source found nothing
+        search_playlists_results=fallback_playlist,
+    )
+
+    found = await chain_public_playlist_search(
+        _YT_DNA, "youtube", adapter, already_have=[],
+        min_threshold=0.0, max_queries=MAX_PUBLIC_SEARCH_QUERIES, target_size=5,
+    )
+
+    assert ("get_mood_genre_playlists", "Energetic", "Pop") in adapter.calls
+    assert any(c[0] == "search_playlists" for c in adapter.calls)
+    assert len(found) == 1
+    assert found[0]["track_id"] == "fallback1"
+
+
+async def test_falls_back_to_text_search_when_official_source_raises():
+    fallback_playlist = [{"playlist_id": "text_search_hit", "name": "some pop playlist"}]
+    tracks = [make_track("fallback1", "Fallback Song", "Some Artist")]
+    adapter = FakeYouTubeAdapter(
+        playlists={"text_search_hit": tracks},
+        mood_genre_playlists_raises=RuntimeError("ytmusicapi network error"),
+        search_playlists_results=fallback_playlist,
+    )
+
+    found = await chain_public_playlist_search(
+        _YT_DNA, "youtube", adapter, already_have=[],
+        min_threshold=0.0, max_queries=MAX_PUBLIC_SEARCH_QUERIES, target_size=5,
+    )
+
+    assert any(c[0] == "search_playlists" for c in adapter.calls)
+    assert len(found) == 1
+
+
+async def test_official_source_partial_still_falls_through_to_text_search_for_the_rest():
+    official_playlists = [{"playlist_id": "official1", "name": "Pop Hits", "source_genres": ["pop"]}]
+    official_tracks = [make_track("off1", "Official Song", "Artist")]  # only 1 track — below target_size
+    fallback_playlist = [{"playlist_id": "fallback_pl", "name": "more pop"}]
+    fallback_tracks = [make_track("fb1", "Fallback Song", "Artist")]
+    adapter = FakeYouTubeAdapter(
+        playlists={"official1": official_tracks, "fallback_pl": fallback_tracks},
+        mood_genre_playlists_results=official_playlists,
+        search_playlists_results=fallback_playlist,
+    )
+
+    found = await chain_public_playlist_search(
+        _YT_DNA, "youtube", adapter, already_have=[],
+        min_threshold=0.0, max_queries=MAX_PUBLIC_SEARCH_QUERIES, target_size=2,
+    )
+
+    track_ids = {t["track_id"] for t in found}
+    assert track_ids == {"off1", "fb1"}
+    assert any(c[0] == "search_playlists" for c in adapter.calls)
+
+
+async def test_spotify_host_never_calls_official_youtube_source():
+    adapter = FakeSpotifyAdapter(
+        playlists={"pl1": [make_track("s1", "Song", "Artist")]},
+        search_playlists_results=[{"playlist_id": "pl1", "name": "pl1"}],
+    )
+
+    found = await chain_public_playlist_search(
+        _YT_DNA, "spotify", adapter, already_have=[],
+        min_threshold=0.0, max_queries=MAX_PUBLIC_SEARCH_QUERIES, target_size=5,
+    )
+
+    assert len(found) == 1  # unaffected — falls straight through to text search, as before
+    assert any(c[0] == "search_playlists" for c in adapter.calls)
 
 
 # ---------------------------------------------------------------------------

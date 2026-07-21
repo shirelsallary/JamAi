@@ -96,11 +96,20 @@ class FakeYouTubeAdapter:
         playlists: dict[str, list[dict]] | None = None,
         search_results: list[dict] | None = None,
         search_playlists_results: list[dict] | None = None,
+        # Section 4 official source (get_mood_genre_playlists) — a list of
+        # playlist dicts as YouTubeAdapter.get_mood_genre_playlists would
+        # return: {"playlist_id", "name", "source_genres"}. Defaults to []
+        # ("the real method exists but found nothing"), matching the real
+        # adapter's own never-raises contract.
+        mood_genre_playlists_results: list[dict] | None = None,
+        mood_genre_playlists_raises: Exception | None = None,
     ):
         self.platform = "youtube"
         self._playlists = playlists or {}
         self._search_results = search_results or []
         self._search_playlists_results = search_playlists_results or []
+        self._mood_genre_playlists_results = mood_genre_playlists_results
+        self._mood_genre_playlists_raises = mood_genre_playlists_raises
         self.calls: list[tuple] = []
 
     async def get_user_playlists(self, limit: int = 50):
@@ -122,6 +131,12 @@ class FakeYouTubeAdapter:
     async def search_playlists(self, query: str, limit: int = 5):
         self.calls.append(("search_playlists", query))
         return self._search_playlists_results
+
+    async def get_mood_genre_playlists(self, mood: str | None, genre: str | None):
+        self.calls.append(("get_mood_genre_playlists", mood, genre))
+        if self._mood_genre_playlists_raises is not None:
+            raise self._mood_genre_playlists_raises
+        return self._mood_genre_playlists_results or []
 
 
 def make_track(track_id, title, artist, duration_ms=200_000, artist_id=None):
