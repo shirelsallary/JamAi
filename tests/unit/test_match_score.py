@@ -46,3 +46,33 @@ def test_score_never_exceeds_one_or_drops_below_zero():
     track = {"valence": 0.8, "energy": 0.9, "genres": ["pop", "dance pop", "electropop"], "title": "x"}
     result = compute_match_score(track, _DNA)
     assert 0.0 <= result["score"] <= 1.0
+
+
+def test_low_confidence_score_differentiates_by_genre_overlap():
+    """Previously audio_score fell back to a flat neutral 0.5 for every
+    low-confidence (YouTube) track regardless of actual genre data — giving
+    every track the same score and never distinguishing a real match from no
+    data at all. Now the weight is folded into genre_overlap, so a track with
+    no genre data at all scores 0, and a track whose (playlist-name-inferred)
+    genres actually overlap the target scores meaningfully higher."""
+    no_data = {"valence": None, "energy": None, "genres": [], "title": "xqzplkm"}
+    full_overlap = {"valence": None, "energy": None, "genres": _DNA["target_genres"], "title": "xqzplkm"}
+
+    no_data_result = compute_match_score(no_data, _DNA)
+    full_overlap_result = compute_match_score(full_overlap, _DNA)
+
+    assert no_data_result["confidence"] == CONFIDENCE_LOW
+    assert full_overlap_result["confidence"] == CONFIDENCE_LOW
+    assert no_data_result["score"] == 0.0
+    assert full_overlap_result["score"] > no_data_result["score"]
+    assert full_overlap_result["score"] >= 0.9  # 0.9 (LOW_CONFIDENCE_WEIGHT_GENRE) * 1.0 overlap
+
+
+def test_low_confidence_track_can_clear_threshold_ladder_floor_with_real_genre_signal():
+    """THRESHOLD_LADDER's floor is 0.50 (queue_dna_engine.py) — a low-confidence
+    track with strong-enough genre overlap must be able to clear it on its own
+    merit, not just tracks with real audio features."""
+    track = {"valence": None, "energy": None, "genres": ["pop", "dance pop"], "title": "xqzplkm"}
+    result = compute_match_score(track, _DNA)
+    assert result["confidence"] == CONFIDENCE_LOW
+    assert result["score"] >= 0.50

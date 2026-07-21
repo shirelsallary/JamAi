@@ -68,6 +68,11 @@ async def _enrich_with_features_and_genres(adapter, tracks: list[dict]) -> dict[
     for t in tracks:
         feat = features_by_id.get(t["track_id"], {})
         genres = genres_by_artist.get(t.get("artist_id"), []) if t.get("artist_id") else []
+        # YouTube tracks have no artist_id (genres_by_artist is always {} for
+        # them) — fall back to the playlist-name-inferred genres already
+        # attached to the raw track dict by YouTubeAdapter.get_playlist_tracks.
+        if not genres and t.get("genres"):
+            genres = t["genres"]
         enrichment[t["track_id"]] = {
             "valence": feat.get("valence"),
             "energy": feat.get("energy"),

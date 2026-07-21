@@ -1,11 +1,33 @@
 import asyncio
+import json
 from functools import partial
 from uuid import UUID
 
 from ytmusicapi import YTMusic
 
 from app.services.cache_service import cache, TOP_TRACKS_TTL, RECOMMENDATIONS_TTL
+from app.services.mood_to_audio_features import infer_genres_from_playlist_name
 from app.services.retry_handler import with_retry
+
+
+def _build_browser_auth_json(raw_cookie: str) -> str:
+    """Wrap a raw `document.cookie` string into the JSON headers dict
+    ytmusicapi's YTMusic() expects for browser-based auth.
+
+    ytmusicapi never needs the browser's own Authorization value: on every
+    request it recomputes SAPISIDHASH itself (ytmusicapi.helpers.get_authorization)
+    from the __Secure-3PAPISID cookie plus Origin. The "authorization" entry
+    here only has to contain the substring "SAPISIDHASH" so
+    determine_auth_type() classifies this as AuthType.BROWSER during
+    YTMusic.__init__ — its actual value is discarded and replaced before the
+    first real request.
+    """
+    return json.dumps({
+        "cookie": raw_cookie,
+        "authorization": "SAPISIDHASH_PLACEHOLDER",
+        "origin": "https://music.youtube.com",
+        "x-goog-authuser": "0",
+    })
 
 
 def _duration_to_ms(duration_str: str | None) -> int:
@@ -32,7 +54,7 @@ def _run_sync(func, *args, **kwargs):
 class YouTubeAdapter:
     def __init__(self, user_id: UUID, auth_json: str):
         self.user_id = user_id
-        self.yt = YTMusic(auth_json)
+        self.yt = YTMusic(_build_browser_auth_json(auth_json))
 
     async def get_user_profile(self) -> dict:
         return {
@@ -98,6 +120,10 @@ class YouTubeAdapter:
         data = await with_retry(
             lambda: _run_sync(self.yt.get_playlist, playlist_id, limit=limit)
         )
+        # Best-effort only (see infer_genres_from_playlist_name) — the closest
+        # thing to genre data YouTube tracks ever get, since get_artists_genres
+        # below always returns {}.
+        inferred_genres = infer_genres_from_playlist_name((data or {}).get("title", ""))
         result = []
         for item in (data or {}).get("tracks", []):
             if not item.get("videoId"):
@@ -109,6 +135,7 @@ class YouTubeAdapter:
                 "artist": artists[0]["name"] if artists else "",
                 "artist_id": None,  # ytmusicapi doesn't expose stable artist-genre data
                 "duration_ms": _duration_to_ms(item.get("duration")),
+                "genres": inferred_genres,
             })
         cache.set(cache_key, result, TOP_TRACKS_TTL)
         return result

@@ -52,3 +52,63 @@ LANGDETECT_TO_APP_LANGUAGE: dict[str, str] = {
     "ar": "Arabic",
     "fr": "French",
 }
+
+# mood keyword (English + Hebrew) -> canonical MOOD_AUDIO_MAP key. Used only by
+# infer_genres_from_playlist_name below.
+_MOOD_KEYWORD_SYNONYMS: dict[str, str] = {
+    "energetic": "Energetic", "energy": "Energetic", "party": "Energetic",
+    "hype": "Energetic", "workout": "Energetic", "gym": "Energetic",
+    "pump up": "Energetic", "מסיבה": "Energetic", "אימון": "Energetic", "אנרגטי": "Energetic",
+    "chill": "Chill", "relax": "Chill", "relaxing": "Chill", "calm": "Chill",
+    "lofi": "Chill", "lo-fi": "Chill", "רגוע": "Chill", "צ'יל": "Chill",
+    "happy": "Happy", "feel good": "Happy", "feelgood": "Happy", "good vibes": "Happy",
+    "שמח": "Happy", "שמחים": "Happy",
+    "sad": "Sad", "heartbreak": "Sad", "breakup": "Sad", "cry": "Sad",
+    "עצוב": "Sad", "עצובים": "Sad",
+    "romantic": "Romantic", "romance": "Romantic", "love": "Romantic",
+    "date night": "Romantic", "רומנטי": "Romantic", "אהבה": "Romantic",
+    "focus": "Focus", "study": "Focus", "studying": "Focus", "concentration": "Focus",
+    "deep work": "Focus", "פוקוס": "Focus", "ריכוז": "Focus", "לימודים": "Focus",
+}
+
+# mood -> genre-ish tags it loosely correlates with — a rough approximation
+# (moods aren't genres) used as a fallback signal only when the playlist name
+# doesn't literally mention a genre word. Proposed by the implementer, same
+# basis as MOOD_AUDIO_MAP/GENRE_EXPANSION_MAP above — not sourced externally.
+_MOOD_GENRE_HINTS: dict[str, list[str]] = {
+    "Energetic": ["pop", "dance pop", "edm", "hip-hop"],
+    "Chill": ["jazz", "smooth jazz", "r&b", "soul", "acoustic"],
+    "Happy": ["pop", "dance pop"],
+    "Sad": ["r&b", "soul", "neo soul"],
+    "Romantic": ["r&b", "soul", "latin", "latin pop"],
+    "Focus": ["classical", "orchestral", "jazz", "smooth jazz"],
+}
+
+
+def infer_genres_from_playlist_name(name: str) -> list[str]:
+    """Best-effort genre guess from a playlist's own name.
+
+    YouTube Music exposes no real genre taxonomy at all — YouTubeAdapter's
+    get_artists_genres always returns {} — so for YouTube tracks this is the
+    only genre-like signal compute_match_score's low-confidence path ever has
+    to work with. Deliberately simple case-insensitive substring matching, no
+    NLP dependency; this is an approximation, not real metadata (the track's
+    confidence stays "low" regardless — see match_score.py).
+
+    Returns a deduped list, possibly empty if nothing matches. Never raises.
+    """
+    if not name:
+        return []
+    lowered = name.lower()
+
+    inferred: list[str] = []
+
+    for genre_key, expansion in GENRE_EXPANSION_MAP.items():
+        if genre_key.lower() in lowered or any(word in lowered for word in expansion):
+            inferred.extend(expansion)
+
+    for keyword, mood_key in _MOOD_KEYWORD_SYNONYMS.items():
+        if keyword in lowered:
+            inferred.extend(_MOOD_GENRE_HINTS.get(mood_key, []))
+
+    return list(dict.fromkeys(inferred))  # dedupe, preserve first-seen order
