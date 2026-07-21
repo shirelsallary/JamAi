@@ -32,7 +32,12 @@ class _YouTubeWebViewScreenState extends State<YouTubeWebViewScreen> {
           }
         },
       ))
-      ..loadRequest(Uri.parse('https://accounts.google.com/signin'));
+      // music.youtube.com itself redirects to Google Sign-in with a valid
+      // continue= param back to music.youtube.com — unlike the generic
+      // accounts.google.com/signin (no continue param), which lands on
+      // myaccount.google.com after login and never triggers onPageFinished's
+      // music.youtube.com check below.
+      ..loadRequest(Uri.parse('https://music.youtube.com'));
   }
 
   Future<void> _extractAndSaveCookies() async {

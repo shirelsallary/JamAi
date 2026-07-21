@@ -53,10 +53,17 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
     if (!mounted) return;
     final platform = me?['platform'] as String?;
     final platformToken = me?['platform_token'] as String?;
+    final hasPlatform = platform != null && platformToken != null && platformToken.isNotEmpty;
+    // This screen must never be reachable without a connected platform —
+    // same check/redirect SplashScreen and LoginScreen already do on their
+    // own entry points; re-checked here too since this screen can be reached
+    // later in the session (Home -> push), not just right after login.
+    if (!hasPlatform) {
+      context.go('/connect-platform');
+      return;
+    }
     setState(() {
-      _hostPlatform = (platform != null && platformToken != null && platformToken.isNotEmpty)
-          ? platform
-          : null;
+      _hostPlatform = platform;
       _loadingPlatform = false;
     });
   }
@@ -146,22 +153,19 @@ class _CreateSessionScreenState extends State<CreateSessionScreen> {
                       // host's platform is auto-selected and not
                       // user-choosable (at most one platform is connected
                       // per account today; see the pre-existing comment on
-                      // _hostPlatform below). Kept as the single
-                      // read-only badge/banner it already was, restyled,
-                      // rather than building a two-option toggle UI that
-                      // would imply a choice the app doesn't support.
+                      // _hostPlatform below). Kept as the single read-only
+                      // badge it already was, restyled, rather than building
+                      // a two-option toggle UI the app doesn't support.
+                      // No no-platform-connected branch here — _loadHostPlatform
+                      // redirects to /connect-platform before this ever builds
+                      // with _hostPlatform null.
                       Text('Playing via', style: kDuskTextTheme.titleMedium),
                       const SizedBox(height: kSpaceSm + 4),
-                      if (_hostPlatform != null)
-                        PlatformBadge(
-                          platform: _hostPlatform == 'spotify'
-                              ? AppPlatform.spotify
-                              : AppPlatform.youtube,
-                        )
-                      else
-                        NoPlatformConnectedBanner(
-                          onConnect: () => context.push('/connect-platform'),
-                        ),
+                      PlatformBadge(
+                        platform: _hostPlatform == 'spotify'
+                            ? AppPlatform.spotify
+                            : AppPlatform.youtube,
+                      ),
                       const SizedBox(height: kSpaceXl + 4),
 
                       // --- Duration ---

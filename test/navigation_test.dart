@@ -14,6 +14,14 @@
 // "fake" is fine: AuthService.getMe swallows the resulting network failure
 // and returns null, which these screens already handle gracefully (they're
 // not what's under test here).
+//
+// CreateSessionScreen is NOT covered here (unlike the other screens) —
+// it now redirects to /connect-platform whenever getMe() doesn't confirm a
+// connected platform (Section 0 platform-guard fix), so a getMe() network
+// failure is no longer a no-op here the way it is for the other screens.
+// That needs a real mocked GET /auth/me response to test meaningfully; see
+// create_session_platform_guard_test.dart, which covers both the "renders
+// with a working back button" and "redirects when not connected" cases.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,7 +31,6 @@ import 'package:jam_ai_app/features/auth/screens/connect_platform_screen.dart';
 import 'package:jam_ai_app/features/auth/screens/register_screen.dart';
 import 'package:jam_ai_app/features/export/screens/export_screen.dart';
 import 'package:jam_ai_app/features/home/screens/home_screen.dart';
-import 'package:jam_ai_app/features/session/screens/create_session_screen.dart';
 import 'package:jam_ai_app/features/session/screens/join_session_screen.dart';
 
 Future<void> pumpScreen(
@@ -62,11 +69,6 @@ void main() {
   group('push-reached screens render a working back button', () {
     testWidgets('RegisterScreen (Login -> Register is now push)', (tester) async {
       await pumpScreen(tester, const RegisterScreen(), reachedViaPush: true);
-      expect(find.byIcon(Icons.arrow_back_ios), findsOneWidget);
-    });
-
-    testWidgets('CreateSessionScreen (Home -> Create is now push)', (tester) async {
-      await pumpScreen(tester, const CreateSessionScreen(), reachedViaPush: true);
       expect(find.byIcon(Icons.arrow_back_ios), findsOneWidget);
     });
 

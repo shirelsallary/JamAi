@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -30,6 +31,24 @@ class _SessionScreenState extends State<SessionScreen> {
   String _queueBuildStatus = 'empty';
   double? _effectiveThreshold;
 
+  // The backend has no distinct "still building" queue_build_status — a
+  // freshly-created session and a session that finished building with
+  // genuinely zero matches both report "empty" (models.py only allows
+  // 'full'/'partial'/'empty'). Client-side-only grace window so the initial
+  // "empty" response (the near-universal first state right after session
+  // creation, before optimize_queue's background build finishes) doesn't
+  // read as "nothing happened" — purely a display distinction, doesn't
+  // affect the WebSocket-push/initial-fetch data flow at all.
+  static const _queueBuildingGracePeriod = Duration(seconds: 20);
+  DateTime? _screenOpenedAt;
+  Timer? _queueBuildingGraceTimer;
+
+  bool get _stillBuildingQueue =>
+      _tracks.isEmpty &&
+      _queueBuildStatus == 'empty' &&
+      _screenOpenedAt != null &&
+      DateTime.now().difference(_screenOpenedAt!) < _queueBuildingGracePeriod;
+
   // Real playback control — host_platform decides which path applies
   // (Spotify device control vs. YouTube IFrame Player); it has no reliable
   // source other than this response (not in route params, not returned to
@@ -37,6 +56,10 @@ class _SessionScreenState extends State<SessionScreen> {
   String? _hostPlatform;
   // 'playing' | 'no_active_device' | 'error' | null (not yet known/attempted)
   String? _spotifyPlaybackStatus;
+  // Only meaningful when _spotifyPlaybackStatus == 'error' — e.g.
+  // 'SPOTIFY_REAUTH_REQUIRED', which needs a "reconnect" action rather than
+  // a plain "Retry" (retrying with the same dead token just fails again).
+  String? _spotifyPlaybackReason;
   bool _isRetryingPlayback = false;
   bool _attemptedInitialSpotifyPlayback = false;
 
@@ -49,12 +72,20 @@ class _SessionScreenState extends State<SessionScreen> {
   void initState() {
     super.initState();
     _sessionId = widget.sessionId;
+    _screenOpenedAt = DateTime.now();
+    // One-shot — just forces a rebuild once the grace period lapses so
+    // _stillBuildingQueue's own elapsed-time check gets re-evaluated even if
+    // no new WebSocket/queue response arrives in the meantime.
+    _queueBuildingGraceTimer = Timer(_queueBuildingGracePeriod, () {
+      if (mounted) setState(() {});
+    });
     _loadQueue();
     _connectWebSocket();
   }
 
   @override
   void dispose() {
+    _queueBuildingGraceTimer?.cancel();
     _channel?.sink.close();
     super.dispose();
   }
@@ -127,10 +158,18 @@ class _SessionScreenState extends State<SessionScreen> {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         _handlePlaybackStatus(data);
       } else {
-        setState(() => _spotifyPlaybackStatus = 'error');
+        setState(() {
+          _spotifyPlaybackStatus = 'error';
+          _spotifyPlaybackReason = null;
+        });
       }
     } catch (_) {
-      if (mounted) setState(() => _spotifyPlaybackStatus = 'error');
+      if (mounted) {
+        setState(() {
+          _spotifyPlaybackStatus = 'error';
+          _spotifyPlaybackReason = null;
+        });
+      }
     } finally {
       if (mounted) setState(() => _isRetryingPlayback = false);
     }
@@ -138,7 +177,10 @@ class _SessionScreenState extends State<SessionScreen> {
 
   void _handlePlaybackStatus(Map<String, dynamic> status) {
     if (!mounted) return;
-    setState(() => _spotifyPlaybackStatus = status['status'] as String?);
+    setState(() {
+      _spotifyPlaybackStatus = status['status'] as String?;
+      _spotifyPlaybackReason = status['reason'] as String?;
+    });
   }
 
   Future<void> _connectWebSocket() async {
@@ -301,7 +343,12 @@ class _SessionScreenState extends State<SessionScreen> {
                     SliverToBoxAdapter(
                       child: Column(
                         children: [
-                          if (_queueBuildStatus == 'partial' || _queueBuildStatus == 'empty')
+                          // Suppressed while _stillBuildingQueue — the
+                          // dedicated loading state below already covers
+                          // "empty" during the grace window; showing both
+                          // would just be two messages saying the same thing.
+                          if (_queueBuildStatus == 'partial' ||
+                              (_queueBuildStatus == 'empty' && !_stillBuildingQueue))
                             Padding(
                               padding:
                                   const EdgeInsets.fromLTRB(kSpaceMd, kSpaceSm + 4, kSpaceMd, 0),
@@ -321,13 +368,24 @@ class _SessionScreenState extends State<SessionScreen> {
                                 message: _spotifyPlaybackStatus == 'no_active_device'
                                     ? 'Open Spotify on your phone and play (or pause) any '
                                         'track, then retry.'
-                                    : "Couldn't start playback on Spotify. Check your "
-                                        'connection and retry.',
+                                    : _spotifyPlaybackReason == 'SPOTIFY_REAUTH_REQUIRED'
+                                        ? "Your Spotify connection expired. Reconnect to "
+                                            'keep playback working.'
+                                        : "Couldn't start playback on Spotify. Check your "
+                                            'connection and retry.',
                                 variant: AppBannerVariant.error,
-                                actionLabel: 'Retry',
-                                actionKey: const Key('retry-playback-button'),
-                                isActionLoading: _isRetryingPlayback,
-                                onAction: _attemptSpotifyPlayback,
+                                actionLabel: _spotifyPlaybackReason == 'SPOTIFY_REAUTH_REQUIRED'
+                                    ? 'Reconnect Spotify'
+                                    : 'Retry',
+                                actionKey: _spotifyPlaybackReason == 'SPOTIFY_REAUTH_REQUIRED'
+                                    ? const Key('reconnect-spotify-button')
+                                    : const Key('retry-playback-button'),
+                                isActionLoading: _spotifyPlaybackReason == 'SPOTIFY_REAUTH_REQUIRED'
+                                    ? false
+                                    : _isRetryingPlayback,
+                                onAction: _spotifyPlaybackReason == 'SPOTIFY_REAUTH_REQUIRED'
+                                    ? () => context.push('/connect-platform')
+                                    : _attemptSpotifyPlayback,
                               ),
                             ),
                           if (_tracks.isNotEmpty)
@@ -341,10 +399,23 @@ class _SessionScreenState extends State<SessionScreen> {
                       ),
                     ),
                     if (_tracks.length <= 1)
-                      const SliverFillRemaining(
+                      SliverFillRemaining(
                         hasScrollBody: false,
                         child: Center(
-                          child: Text('Queue is empty', style: TextStyle(color: kTextSecondary)),
+                          child: _stillBuildingQueue
+                              ? Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    CircularProgressIndicator(color: kPrimary),
+                                    SizedBox(height: kSpaceMd),
+                                    Text(
+                                      "Building your queue... this'll just take a few seconds",
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(color: kTextSecondary),
+                                    ),
+                                  ],
+                                )
+                              : const Text('Queue is empty', style: TextStyle(color: kTextSecondary)),
                         ),
                       )
                     else ...[
