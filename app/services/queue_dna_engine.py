@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.adapters.platform_factory import NoPlatformConnectedError, get_platform_adapter
 from app.models.models import QueueTrack, Session, SessionCandidateTrack
 from app.services.match_score import compute_match_score
+from app.services.mood_to_audio_features import GENRE_EXPANSION_MAP
 from app.services.session_dna import load_or_build_session_dna
 from app.services.social_overlap import (
     ScannedPlaylist,
@@ -41,9 +42,16 @@ def target_queue_size(session: Session) -> int:
 # Section 3 — candidate collection (saved playlists, not top-tracks)
 # ---------------------------------------------------------------------------
 
-async def _enrich_with_features_and_genres(adapter, tracks: list[dict]) -> dict[str, dict]:
+async def _enrich_with_features_and_genres(
+    adapter, tracks: list[dict], mood: str | None = None, genre: str | None = None
+) -> dict[str, dict]:
     """Batch-fetch audio features + artist genres once for a set of tracks.
-    Returns {track_id: {"valence":..,"energy":..,"genres":[...]}}."""
+    Returns {track_id: {"valence":..,"energy":..,"genres":[...]}}.
+
+    mood/genre (the current session's picks) are optional — only used to
+    cross-reference personal-library tracks against
+    YouTubeAdapter.get_known_track_ids_for_category (see below); omit them
+    (e.g. no session context available) and this behaves exactly as before."""
     track_ids = list({t["track_id"] for t in tracks if t.get("track_id")})
     artist_ids = list({t["artist_id"] for t in tracks if t.get("artist_id")})
 
@@ -64,10 +72,27 @@ async def _enrich_with_features_and_genres(adapter, tracks: list[dict]) -> dict[
         except Exception:
             logger.exception("artist-genre batch fetch failed")
 
+    # Certain cross-reference (Section 3 personal-library tagging): if a
+    # track's videoId is also in one of the session's target genre/mood's
+    # own official YouTube playlists, its genre is known, not guessed — this
+    # must run BEFORE the infer_genres_from_playlist_name fallback below, so
+    # a certain match always wins over a heuristic one. Genre-less sessions
+    # (genre=None) skip this entirely — there's nothing certain to assign
+    # without a genre to look up in GENRE_EXPANSION_MAP (same reasoning as
+    # get_mood_genre_playlists' mood-only hits carrying source_genres=None).
+    known_track_ids: set[str] = set()
+    if genre and hasattr(adapter, "get_known_track_ids_for_category"):
+        try:
+            known_track_ids = await adapter.get_known_track_ids_for_category(mood, genre)
+        except Exception:
+            logger.exception("known-track-id cross-reference lookup failed")
+
     enrichment: dict[str, dict] = {}
     for t in tracks:
         feat = features_by_id.get(t["track_id"], {})
         genres = genres_by_artist.get(t.get("artist_id"), []) if t.get("artist_id") else []
+        if not genres and t["track_id"] in known_track_ids:
+            genres = GENRE_EXPANSION_MAP.get(genre, [genre.lower()])
         # YouTube tracks have no artist_id (genres_by_artist is always {} for
         # them) — fall back to the playlist-name-inferred genres already
         # attached to the raw track dict by YouTubeAdapter.get_playlist_tracks.
@@ -82,11 +107,16 @@ async def _enrich_with_features_and_genres(adapter, tracks: list[dict]) -> dict[
 
 
 async def scan_saved_playlists(
-    user, selected_platform: str
+    user, selected_platform: str, mood: str | None = None, genre: str | None = None
 ) -> tuple[list[dict], list[ScannedPlaylist]]:
     """
     Section 3 — scans a single participant's SAVED PLAYLISTS (not top-tracks) on
     the platform THEY selected (may differ from session.host_platform, Section 0).
+
+    mood/genre are the current session's picks, passed through to
+    _enrich_with_features_and_genres for the personal-library certain-genre
+    cross-reference (see its docstring) — optional, default to the previous
+    (guess-only) behavior when omitted.
 
     Returns (candidate_tracks, scanned_playlists):
       candidate_tracks: deduped-by-track_id list of raw track dicts (no score yet).
@@ -107,7 +137,7 @@ async def scan_saved_playlists(
         raw_by_playlist.append((playlist["playlist_id"], tracks))
 
     all_tracks = [t for _, tracks in raw_by_playlist for t in tracks]
-    enrichment = await _enrich_with_features_and_genres(adapter, all_tracks)
+    enrichment = await _enrich_with_features_and_genres(adapter, all_tracks, mood=mood, genre=genre)
 
     candidate_tracks: dict[str, dict] = {}
     scanned_playlists: list[ScannedPlaylist] = []
@@ -536,7 +566,8 @@ async def on_guest_joined(db, session: Session, new_participant, new_user) -> No
     dna = load_or_build_session_dna(session)
     try:
         new_tracks, new_playlists = await scan_saved_playlists(
-            new_user, new_participant.selected_platform
+            new_user, new_participant.selected_platform,
+            mood=dna.get("raw_mood"), genre=dna.get("raw_genre"),
         )
     except NoPlatformConnectedError:
         return

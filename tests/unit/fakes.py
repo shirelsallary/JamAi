@@ -103,6 +103,12 @@ class FakeYouTubeAdapter:
         # adapter's own never-raises contract.
         mood_genre_playlists_results: list[dict] | None = None,
         mood_genre_playlists_raises: Exception | None = None,
+        # Section 3 personal-library cross-reference (get_known_track_ids_for_category)
+        # — a set of videoIds "certainly" known for the (mood, genre) looked
+        # up. Defaults to an empty set (real method's own never-raises
+        # contract when nothing matches).
+        known_track_ids_results: set[str] | None = None,
+        known_track_ids_raises: Exception | None = None,
     ):
         self.platform = "youtube"
         self._playlists = playlists or {}
@@ -110,6 +116,8 @@ class FakeYouTubeAdapter:
         self._search_playlists_results = search_playlists_results or []
         self._mood_genre_playlists_results = mood_genre_playlists_results
         self._mood_genre_playlists_raises = mood_genre_playlists_raises
+        self._known_track_ids_results = known_track_ids_results
+        self._known_track_ids_raises = known_track_ids_raises
         self.calls: list[tuple] = []
 
     async def get_user_playlists(self, limit: int = 50):
@@ -137,6 +145,14 @@ class FakeYouTubeAdapter:
         if self._mood_genre_playlists_raises is not None:
             raise self._mood_genre_playlists_raises
         return self._mood_genre_playlists_results or []
+
+    async def get_known_track_ids_for_category(
+        self, mood: str | None, genre: str | None, playlist_limit: int = 15
+    ):
+        self.calls.append(("get_known_track_ids_for_category", mood, genre, playlist_limit))
+        if self._known_track_ids_raises is not None:
+            raise self._known_track_ids_raises
+        return self._known_track_ids_results or set()
 
 
 def make_track(track_id, title, artist, duration_ms=200_000, artist_id=None):

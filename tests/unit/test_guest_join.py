@@ -45,7 +45,7 @@ async def test_guest_join_does_not_rescan_existing_participants(db, monkeypatch)
     call_log = []
     real_scan = engine.scan_saved_playlists
 
-    async def spy_scan(user, platform):
+    async def spy_scan(user, platform, mood=None, genre=None):
         call_log.append(user.id)
         return [], []
 

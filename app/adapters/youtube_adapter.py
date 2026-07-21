@@ -7,7 +7,7 @@ from ytmusicapi import YTMusic
 from ytmusicapi.navigation import CAROUSEL_CONTENTS, GRID_ITEMS, MTRIR, SECTION_LIST, SINGLE_COLUMN_TAB, nav
 from ytmusicapi.parsers.browsing import parse_playlist
 
-from app.services.cache_service import cache, MOOD_CATEGORIES_TTL, TOP_TRACKS_TTL, RECOMMENDATIONS_TTL
+from app.services.cache_service import cache, KNOWN_TRACK_IDS_TTL, MOOD_CATEGORIES_TTL, TOP_TRACKS_TTL, RECOMMENDATIONS_TTL
 from app.services.mood_to_audio_features import (
     GENRE_EXPANSION_MAP,
     GENRE_TO_YT_CATEGORY,
@@ -298,6 +298,58 @@ class YouTubeAdapter:
                     results.append({"playlist_id": pid, "name": pl.get("title", ""), "source_genres": None})
 
         return results
+
+    async def get_known_track_ids_for_category(
+        self, mood: str | None, genre: str | None, playlist_limit: int = 15
+    ) -> set[str]:
+        """
+        Cross-reference source for Section 3's personal-library genre tagging
+        (_enrich_with_features_and_genres): a set of videoIds known — with
+        certainty — to belong to the genre/mood category get_mood_genre_playlists
+        resolves to. If a personal-library track's videoId is in this set, its
+        genre is certain (GENRE_EXPANSION_MAP[genre]), not a
+        infer_genres_from_playlist_name guess.
+
+        Only scans the first `playlist_limit` of get_mood_genre_playlists'
+        results — a category can hold hundreds of playlists (live-verified:
+        193 for "Pop", 462 for "Energize"), and scanning all of them with
+        get_playlist_tracks every time would be far too expensive. 15 is a
+        cost/coverage compromise: ~15 official playlists x ~50-100 tracks
+        each already covers a few thousand distinct videoIds per category,
+        while keeping the get_playlist_tracks call count bounded (each of
+        those calls is itself already cached — TOP_TRACKS_TTL — so repeat
+        lookups across categories that happen to share a playlist are free).
+
+        The assembled set itself is cached whole for a day per (mood, genre,
+        playlist_limit) — this cost is paid once per calendar day per
+        category combination, not once per session/user, since neither
+        get_mood_genre_playlists' result nor those playlists' contents
+        change meaningfully within a day. Never raises — returns an empty
+        set on any failure, same as get_mood_genre_playlists.
+        """
+        cache_key = f"yt_known_track_ids:{mood or ''}:{genre or ''}:{playlist_limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            playlists = await self.get_mood_genre_playlists(mood, genre)
+        except Exception:
+            return set()
+
+        known_ids: set[str] = set()
+        for playlist in playlists[:playlist_limit]:
+            pid = playlist.get("playlist_id")
+            if not pid:
+                continue
+            try:
+                tracks = await self.get_playlist_tracks(pid)
+            except Exception:
+                continue
+            known_ids.update(t["track_id"] for t in tracks if t.get("track_id"))
+
+        cache.set(cache_key, known_ids, KNOWN_TRACK_IDS_TTL)
+        return known_ids
 
     async def search_tracks(self, query: str, limit: int = 20) -> list:
         items = await with_retry(

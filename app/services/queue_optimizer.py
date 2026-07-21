@@ -97,7 +97,10 @@ async def _build_initial(session_id: str, db, broadcast_fn) -> None:
 
     for participant, user in participants:
         try:
-            tracks, playlists = await scan_saved_playlists(user, participant.selected_platform)
+            tracks, playlists = await scan_saved_playlists(
+                user, participant.selected_platform,
+                mood=dna.get("raw_mood"), genre=dna.get("raw_genre"),
+            )
         except NoPlatformConnectedError:
             continue
         except Exception:

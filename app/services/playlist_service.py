@@ -38,7 +38,10 @@ async def generate_playlist(
     scored: list[dict] = []
     for participant, user in participants:
         try:
-            tracks, _playlists = await scan_saved_playlists(user, participant.selected_platform)
+            tracks, _playlists = await scan_saved_playlists(
+                user, participant.selected_platform,
+                mood=dna.get("raw_mood"), genre=dna.get("raw_genre"),
+            )
         except NoPlatformConnectedError:
             continue
         except Exception:
