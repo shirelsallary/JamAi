@@ -25,6 +25,10 @@ class _ExportScreenState extends State<ExportScreen> {
   String? _playlistUrl;
   int? _trackCount;
   String? _error;
+  String? _launchError;
+
+  static const _kLaunchErrorMessage =
+      "Couldn't open the playlist - try again or check your browser";
 
   @override
   void initState() {
@@ -79,12 +83,30 @@ class _ExportScreenState extends State<ExportScreen> {
 
   Future<void> _openPlaylist() async {
     final url = _playlistUrl;
-    if (url == null) return;
+    if (url == null) {
+      setState(() {
+        _launchError = _kLaunchErrorMessage;
+      });
+      return;
+    }
 
-    if (Platform.isLinux) {
-      await Process.run('xdg-open', [url]);
-    } else {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    try {
+      bool launched;
+      if (Platform.isLinux) {
+        final result = await Process.run('xdg-open', [url]);
+        launched = result.exitCode == 0;
+      } else {
+        launched = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      }
+      if (!mounted) return;
+      setState(() {
+        _launchError = launched ? null : _kLaunchErrorMessage;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _launchError = _kLaunchErrorMessage;
+      });
     }
   }
 
@@ -197,6 +219,10 @@ class _ExportScreenState extends State<ExportScreen> {
             icon: Icons.open_in_new,
             onPressed: _openPlaylist,
           ),
+          if (_launchError != null) ...[
+            const SizedBox(height: kSpaceMd),
+            AppBanner(message: _launchError!, variant: AppBannerVariant.error),
+          ],
         ],
         const SizedBox(height: kSpaceLg),
         TextButton(
