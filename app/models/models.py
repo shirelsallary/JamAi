@@ -193,8 +193,16 @@ class QueueTrack(Base):
     )
 
     session: Mapped["Session"] = relationship("Session", back_populates="queue_tracks")
+    # passive_deletes=True — the DB's own ON DELETE CASCADE (see the
+    # queue_track_id ForeignKeyConstraint on PlaybackEvent) already handles
+    # dependent playback_events rows when a queue_track is deleted. Without
+    # this, the ORM's default cascade tries to null out queue_track_id on
+    # those rows itself before the DELETE — which fails immediately, since
+    # that column is NOT NULL (IntegrityError on every skip that deletes a
+    # queue_track with a recorded playback_events row, e.g. the skip event
+    # routers/queue.py's own skip() endpoint just inserted for it).
     playback_events: Mapped[list["PlaybackEvent"]] = relationship(
-        "PlaybackEvent", back_populates="queue_track"
+        "PlaybackEvent", back_populates="queue_track", passive_deletes=True
     )
 
 
