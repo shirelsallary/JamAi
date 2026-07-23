@@ -125,11 +125,7 @@ All tests use an SQLite in-memory database — no Supabase connection required.
 | YouTube Music | ytmusicapi + Circuit Breaker | No official public API exists |
 | Token Storage | Fernet encrypted | Never store OAuth tokens in plaintext |
 
-## SRS Coverage
 
-All 9 Functional Requirements from the SRS are implemented:
-
-FR-1 ✅ &nbsp; FR-2 ✅ &nbsp; FR-3 ✅ &nbsp; FR-4 ✅ &nbsp; FR-5 ✅ &nbsp; FR-6 ✅ &nbsp; FR-7 ✅ &nbsp; FR-8 ✅ &nbsp; FR-9 ✅
 
 ## Known Limitations (MVP)
 
