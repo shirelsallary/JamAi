@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -32,22 +31,18 @@ class _SessionScreenState extends State<SessionScreen> {
   double? _effectiveThreshold;
 
   // The backend has no distinct "still building" queue_build_status — a
-  // freshly-created session and a session that finished building with
-  // genuinely zero matches both report "empty" (models.py only allows
-  // 'full'/'partial'/'empty'). Client-side-only grace window so the initial
-  // "empty" response (the near-universal first state right after session
-  // creation, before optimize_queue's background build finishes) doesn't
-  // read as "nothing happened" — purely a display distinction, doesn't
-  // affect the WebSocket-push/initial-fetch data flow at all.
-  static const _queueBuildingGracePeriod = Duration(seconds: 20);
-  DateTime? _screenOpenedAt;
-  Timer? _queueBuildingGraceTimer;
-
-  bool get _stillBuildingQueue =>
-      _tracks.isEmpty &&
-      _queueBuildStatus == 'empty' &&
-      _screenOpenedAt != null &&
-      DateTime.now().difference(_screenOpenedAt!) < _queueBuildingGracePeriod;
+  // freshly-created session that's still building and a session that
+  // finished building with genuinely zero matches both report "empty"
+  // (models.py only allows 'full'/'partial'/'empty'), and there's no
+  // separate 'pending' status to tell them apart (a known backend
+  // limitation, out of scope here). Deliberately biased toward "still
+  // building": as long as the queue is empty and status is 'empty', always
+  // show the loading state rather than risk mislabeling an in-progress
+  // build as "nothing found". Accepted tradeoff: a session that genuinely
+  // has zero matches never gets a distinct "nothing found" message and
+  // instead stays on the loading state indefinitely — intentional, not a
+  // bug to fix here.
+  bool get _stillBuildingQueue => _tracks.isEmpty && _queueBuildStatus == 'empty';
 
   // Real playback control — host_platform decides which path applies
   // (Spotify device control vs. YouTube IFrame Player); it has no reliable
@@ -72,20 +67,12 @@ class _SessionScreenState extends State<SessionScreen> {
   void initState() {
     super.initState();
     _sessionId = widget.sessionId;
-    _screenOpenedAt = DateTime.now();
-    // One-shot — just forces a rebuild once the grace period lapses so
-    // _stillBuildingQueue's own elapsed-time check gets re-evaluated even if
-    // no new WebSocket/queue response arrives in the meantime.
-    _queueBuildingGraceTimer = Timer(_queueBuildingGracePeriod, () {
-      if (mounted) setState(() {});
-    });
     _loadQueue();
     _connectWebSocket();
   }
 
   @override
   void dispose() {
-    _queueBuildingGraceTimer?.cancel();
     _channel?.sink.close();
     super.dispose();
   }
@@ -220,7 +207,7 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
-  Future<void> _skipTrack() async {
+  Future<void> _skipTrack([double playbackPct = 35.0]) async {
     final token = await AuthService.getToken();
     if (!mounted) return;
     if (token == null) return;
@@ -232,7 +219,7 @@ class _SessionScreenState extends State<SessionScreen> {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
         },
-        body: jsonEncode({'playback_pct': 35.0}),
+        body: jsonEncode({'playback_pct': playbackPct}),
       );
     } catch (_) {}
 
@@ -243,7 +230,7 @@ class _SessionScreenState extends State<SessionScreen> {
     switch (event.type) {
       case YouTubePlayerEventType.stateChange:
         if (event.state == YouTubePlayerState.ended) {
-          _autoAdvance();
+          _autoAdvance(playbackPctForYouTubeEvent(event));
         }
         break;
       case YouTubePlayerEventType.error:
@@ -251,7 +238,7 @@ class _SessionScreenState extends State<SessionScreen> {
         // working embeddable video ID) — skip past it automatically rather
         // than stalling the whole session on one bad track, and tell the
         // host plainly rather than failing silently.
-        _autoAdvance();
+        _autoAdvance(playbackPctForYouTubeEvent(event));
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -268,10 +255,10 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
-  Future<void> _autoAdvance() async {
+  Future<void> _autoAdvance([double playbackPct = 35.0]) async {
     if (_autoAdvancePending) return;
     _autoAdvancePending = true;
-    await _skipTrack();
+    await _skipTrack(playbackPct);
   }
 
   Future<void> _endSession() async {
@@ -286,8 +273,13 @@ class _SessionScreenState extends State<SessionScreen> {
         );
       } catch (_) {}
     }
+    if (!mounted) return;
 
-    if (mounted) context.go('/export/$_sessionId');
+    // Always lands on the "Playback ended" screen regardless of what /close
+    // did — export itself is now a manual, explicit action the host takes
+    // there (Export Playlist button), not auto-triggered on arrival, so
+    // there's nothing to wait on or react to here.
+    context.go('/export/$_sessionId');
   }
 
   @override

@@ -40,7 +40,7 @@ class _YouTubePlayerWidgetState extends State<YouTubePlayerWidget> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
       ..addJavaScriptChannel('YtBridge', onMessageReceived: _handleMessage)
-      ..loadHtmlString(_playerHtml);
+      ..loadHtmlString(_playerHtml, baseUrl: 'https://jamai-lpjq.onrender.com');
   }
 
   void _handleMessage(JavaScriptMessage message) {

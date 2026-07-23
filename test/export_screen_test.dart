@@ -59,6 +59,59 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // Simulates the real entry point (SessionScreen pushes '/export/:id', see
+  // session_screen.dart's _endSession) so a failed export has an underlying
+  // route to pop back to, same as production.
+  Future<void> pumpExportScreenReachedViaPush(WidgetTester tester) async {
+    final router = GoRouter(
+      initialLocation: '/root',
+      routes: [
+        GoRoute(
+          path: '/root',
+          builder: (c, s) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () => c.push('/export/test-session-id'),
+                child: const Text('ROOT_PLACEHOLDER'),
+              ),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/export/:id',
+          builder: (c, s) => ExportScreen(sessionId: s.pathParameters['id']!),
+        ),
+        GoRoute(path: '/home', builder: (c, s) => const Scaffold(body: Text('HOME_PLACEHOLDER'))),
+        GoRoute(path: '/', builder: (c, s) => const Scaffold(body: Text('LOGIN_PLACEHOLDER'))),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    // The tap, the pump that finishes the push transition (mounting
+    // ExportScreen and firing its initState's real http.post), AND the real
+    // wait for that call to resolve must all happen inside the SAME
+    // runAsync call — a Future's real I/O is bound to whichever zone it was
+    // *started* in, not whatever zone later awaits it, so starting the real
+    // HTTP call outside runAsync (e.g. via a plain tester.pump() beforehand)
+    // means it can never resolve no matter how long a later runAsync waits.
+    await tester.runAsync(() async {
+      await tester.tap(find.text('ROOT_PLACEHOLDER'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400)); // finish the push transition
+      await Future.delayed(const Duration(milliseconds: 400)); // let the real POST resolve
+    });
+
+    // Discrete pumps rather than pumpAndSettle() to reflect the now-resolved
+    // state — pumpAndSettle's own animation-quiescence wait doesn't play
+    // well with this harness's page-transition timing. 10x100ms comfortably
+    // covers the ~600ms the pop transition needs to fully finish.
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+  }
+
   testWidgets('terminal screen has no back button (automaticallyImplyLeading preserved)',
       (tester) async {
     await pumpExportScreen(tester);
@@ -79,32 +132,30 @@ void main() {
     expect(find.text('Share link'), findsNothing);
   });
 
-  testWidgets('failed export shows the error state with a working Try Again button',
-      (tester) async {
-    exportStatusCode = 422;
-    await pumpExportScreen(tester);
+  testWidgets(
+    'failed export pops back to the caller (e.g. SessionScreen) instead of '
+    'showing a separate error screen — no error screen/dialog is ever shown',
+    (tester) async {
+      exportStatusCode = 422;
+      await pumpExportScreenReachedViaPush(tester);
 
-    expect(find.text('Export failed. Session may already be exported.'), findsOneWidget);
-    expect(find.text('Try Again'), findsOneWidget);
-    expect(find.text('Go to Home'), findsOneWidget);
+      // Popped back to whatever pushed this route — not stuck here, and
+      // no error UI of any kind was ever shown on this screen.
+      expect(find.text('ROOT_PLACEHOLDER'), findsOneWidget);
+      expect(find.textContaining('JAM Saved'), findsNothing);
+      expect(find.text('Export failed. Session may already be exported.'), findsNothing);
+      expect(find.byType(ExportScreen), findsNothing);
+    },
+  );
 
-    exportStatusCode = 200;
-    await tester.runAsync(() async {
-      await tester.tap(find.text('Try Again'));
-      await Future.delayed(const Duration(milliseconds: 300));
-    });
-    await tester.pumpAndSettle();
+  testWidgets(
+    'successful export is unaffected — still lands on the "JAM Saved!" success '
+    'screen when reached via push (same as the real SessionScreen entry point)',
+    (tester) async {
+      await pumpExportScreenReachedViaPush(tester);
 
-    expect(find.textContaining('JAM Saved'), findsOneWidget);
-  });
-
-  testWidgets('Go to Home navigates home from the error state', (tester) async {
-    exportStatusCode = 422;
-    await pumpExportScreen(tester);
-
-    await tester.tap(find.text('Go to Home'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('HOME_PLACEHOLDER'), findsOneWidget);
-  });
+      expect(find.textContaining('JAM Saved'), findsOneWidget);
+      expect(find.text('Open Playlist'), findsOneWidget);
+    },
+  );
 }

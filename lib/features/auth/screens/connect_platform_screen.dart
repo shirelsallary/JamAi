@@ -75,6 +75,23 @@ class _ConnectPlatformScreenState extends State<ConnectPlatformScreen> {
     } catch (_) {
       // no deep-link support on this platform — manual fallback still works
     }
+
+    // Login now always routes here first, even for users who already have a
+    // platform connected — check on load and reuse the existing "Already
+    // connected? Refresh" verify button/flow to continue to Home, rather than
+    // skipping this screen entirely.
+    _checkAlreadyConnected();
+  }
+
+  Future<void> _checkAlreadyConnected() async {
+    final token = await AuthService.getToken();
+    if (token == null || !mounted) return;
+    final me = await AuthService.getMe(token);
+    if (!mounted) return;
+    final platformToken = me?['platform_token'];
+    if (platformToken != null && platformToken.toString().isNotEmpty) {
+      setState(() => _showVerifyButton = true);
+    }
   }
 
   @override

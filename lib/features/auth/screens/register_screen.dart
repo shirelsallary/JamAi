@@ -52,7 +52,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _register() async {
-    final email = _emailController.text.trim();
+    final email = _emailController.text.trim().toLowerCase();
     final password = _passwordController.text;
     final confirm = _confirmController.text;
 
@@ -162,7 +162,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: kSpaceMd),
                   AppTextField(
                     controller: _passwordController,
-                    obscureText: true,
+                    obscureText: false,
                     keyboardType: TextInputType.visiblePassword,
                     labelText: 'Password',
                     helperText: 'Min 8 chars, 1 uppercase, 1 number, 1 symbol (!@#\$)',

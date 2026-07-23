@@ -44,11 +44,13 @@ const _queuePayload = {
 void main() {
   late HttpServer server;
   late String playResponseStatus;
+  late String? playResponseReason;
 
   setUp(() async {
     HttpOverrides.global = null;
     SharedPreferences.setMockInitialValues({'token': 'fake-test-token'});
     playResponseStatus = 'no_active_device';
+    playResponseReason = null;
 
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8000);
     server.listen((request) async {
@@ -56,7 +58,10 @@ void main() {
           request.method == 'POST') {
         request.response.statusCode = 200;
         request.response.headers.contentType = ContentType.json;
-        request.response.write(jsonEncode({'status': playResponseStatus}));
+        request.response.write(jsonEncode({
+          'status': playResponseStatus,
+          'reason': playResponseReason,
+        }));
       } else if (request.uri.path.startsWith('/queue/') && request.method == 'GET') {
         request.response.statusCode = 200;
         request.response.headers.contentType = ContentType.json;
@@ -82,6 +87,10 @@ void main() {
         ),
         GoRoute(path: '/home', builder: (c, s) => const Scaffold(body: Text('HOME_PLACEHOLDER'))),
         GoRoute(path: '/', builder: (c, s) => const Scaffold(body: Text('LOGIN_PLACEHOLDER'))),
+        GoRoute(
+          path: '/connect-platform',
+          builder: (c, s) => const Scaffold(body: Text('CONNECT_PLATFORM_PLACEHOLDER')),
+        ),
       ],
     );
     await tester.runAsync(() async {
@@ -124,6 +133,32 @@ void main() {
       await pumpSessionScreen(tester);
 
       expect(find.byKey(const Key('spotify-playback-banner')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Spotify reauth required (Fix 1) -> banner with a Reconnect action, not Retry',
+    (tester) async {
+      playResponseStatus = 'error';
+      playResponseReason = 'SPOTIFY_REAUTH_REQUIRED';
+
+      await pumpSessionScreen(tester);
+
+      expect(find.byKey(const Key('spotify-playback-banner')), findsOneWidget);
+      expect(find.byKey(const Key('retry-playback-button')), findsNothing);
+      expect(find.byKey(const Key('reconnect-spotify-button')), findsOneWidget);
+      expect(
+        find.text('Your Spotify connection expired. Reconnect to keep playback working.'),
+        findsOneWidget,
+      );
+
+      // Tapping it goes to the existing "Manage Spotify Connection" reconnect
+      // entry point (ConnectPlatformScreen) rather than retrying the same
+      // dead refresh token.
+      await tester.tap(find.byKey(const Key('reconnect-spotify-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('CONNECT_PLATFORM_PLACEHOLDER'), findsOneWidget);
     },
   );
 }

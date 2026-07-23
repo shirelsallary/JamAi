@@ -24,7 +24,6 @@ class _ExportScreenState extends State<ExportScreen> {
   bool _exported = false;
   String? _playlistUrl;
   int? _trackCount;
-  String? _error;
   String? _launchError;
 
   static const _kLaunchErrorMessage =
@@ -34,14 +33,15 @@ class _ExportScreenState extends State<ExportScreen> {
   void initState() {
     super.initState();
     _sessionId = widget.sessionId;
-    _exportSession();
+    // Reached unconditionally whenever the host ends the session — this
+    // screen itself always shows "Playback ended" with an Export button and
+    // a Back to Home button, regardless of whether export ends up
+    // succeeding. Export only runs when the host explicitly taps Export
+    // Playlist below, not automatically on load.
   }
 
   Future<void> _exportSession() async {
-    setState(() {
-      _isExporting = true;
-      _error = null;
-    });
+    setState(() => _isExporting = true);
 
     try {
       final token = await AuthService.getToken();
@@ -66,19 +66,28 @@ class _ExportScreenState extends State<ExportScreen> {
           _trackCount = data['track_count'] as int?;
         });
       } else {
-        setState(() {
-          _isExporting = false;
-          _error = 'Export failed. Session may already be exported.';
-        });
+        _showExportFailedSnackBar();
       }
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _isExporting = false;
-          _error = 'Export failed. Session may already be exported.';
-        });
-      }
+      _showExportFailedSnackBar();
     }
+  }
+
+  // No separate error screen and no navigating away — stay right here on
+  // "Playback ended" with Export Playlist still up to retry, and a light,
+  // non-blocking SnackBar instead. Deliberately doesn't surface the actual
+  // status code/exception (e.g. the known YouTube 401 on create_playlist) —
+  // that's a separate, already-tracked issue, not something to explain here.
+  void _showExportFailedSnackBar() {
+    if (!mounted) return;
+    setState(() => _isExporting = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Couldn't export right now — you can try again."),
+        backgroundColor: kTextSecondary,
+        duration: Duration(seconds: 4),
+      ),
+    );
   }
 
   Future<void> _openPlaylist() async {
@@ -116,9 +125,8 @@ class _ExportScreenState extends State<ExportScreen> {
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Session Export'),
-        // Terminal screen — reached only after a session ends, with no
-        // meaningful "back" destination (Navigator.canPop is false here,
-        // same rationale as SessionQrScreen). Preserved unchanged.
+        // No visible back button on any state here — "Back to Home" below
+        // is the one, always-available way out at every stage.
         automaticallyImplyLeading: false,
       ),
       body: GradientBackground(
@@ -128,15 +136,41 @@ class _ExportScreenState extends State<ExportScreen> {
               padding: const EdgeInsets.all(kSpaceLg),
               child: _isExporting
                   ? _buildLoadingState()
-                  : _error != null
-                      ? _buildErrorState()
-                      : _exported
-                          ? _buildSuccessState()
-                          : const SizedBox.shrink(),
+                  : _exported
+                      ? _buildSuccessState()
+                      : _buildEndedState(),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildEndedState() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.stop_circle_outlined, size: 80, color: kPrimary),
+        const SizedBox(height: kSpaceMd),
+        Text('Playback ended', style: kDuskTextTheme.headlineMedium),
+        const SizedBox(height: kSpaceSm),
+        Text(
+          'Save this session\'s queue as a playlist to keep it.',
+          style: kDuskTextTheme.bodyMedium,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: kSpaceXl),
+        PrimaryButton(
+          label: 'Export Playlist',
+          icon: Icons.save_alt,
+          onPressed: _exportSession,
+        ),
+        const SizedBox(height: kSpaceLg),
+        TextButton(
+          onPressed: () => context.go('/home'),
+          child: const Text('Back to Home'),
+        ),
+      ],
     );
   }
 
@@ -149,24 +183,6 @@ class _ExportScreenState extends State<ExportScreen> {
         Text(
           'Saving your JAM playlist...',
           style: kDuskTextTheme.bodyMedium,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildErrorState() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Icon(Icons.error_outline, size: 64, color: kRed),
-        const SizedBox(height: kSpaceMd),
-        AppBanner(message: _error!, variant: AppBannerVariant.error),
-        const SizedBox(height: kSpaceLg),
-        PrimaryButton(label: 'Try Again', onPressed: _exportSession),
-        const SizedBox(height: kSpaceSm),
-        TextButton(
-          onPressed: () => context.go('/home'),
-          child: const Text('Go to Home'),
         ),
       ],
     );
@@ -208,9 +224,9 @@ class _ExportScreenState extends State<ExportScreen> {
           ),
           const SizedBox(height: kSpaceLg),
           // Labeled "Open Playlist" rather than the mockup's "Save to
-          // Spotify" — the playlist is already saved automatically (export
-          // runs on screen load, above), so this button opens/confirms it
-          // rather than saving anything new. Also, export targets whichever
+          // Spotify" — the playlist is already saved (the Export Playlist
+          // tap that got us here), so this button opens/confirms it rather
+          // than saving anything new. Also, export targets whichever
           // platform the host connected (Spotify or YouTube — see
           // playlist_service.py's get_platform_adapter), so a Spotify-
           // specific label would be inaccurate for YouTube hosts.

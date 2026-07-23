@@ -66,6 +66,20 @@ class YouTubePlayerEvent {
   }
 }
 
+/// The playback_pct to report to the backend's PATCH /queue/{id}/skip
+/// endpoint for a terminal YouTube player event. TC-9's export filter
+/// (playlist_service.py) only checks playback_pct >= 50 — it doesn't
+/// distinguish event_type at all — so a track that ended naturally must be
+/// reported near 100%, not lumped in with the existing 35% used for a
+/// genuine error/skip, or it wrongly fails TC-9 despite being fully played.
+double playbackPctForYouTubeEvent(YouTubePlayerEvent event) {
+  if (event.type == YouTubePlayerEventType.stateChange &&
+      event.state == YouTubePlayerState.ended) {
+    return 100.0;
+  }
+  return 35.0;
+}
+
 /// Escapes a video ID for safe injection into a single-quoted JS string
 /// literal (see jamaiLoadVideo(...) calls in youtube_player_widget.dart).
 /// YouTube video IDs are always [A-Za-z0-9_-]{11}, but this doesn't assume

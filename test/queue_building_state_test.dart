@@ -93,6 +93,35 @@ void main() {
   );
 
   testWidgets(
+    'queue still empty well past the old 20s grace window -> keeps showing '
+    'the "building" message forever, never falls back to "Queue is empty"',
+    (tester) async {
+      queuePayload = {
+        'tracks': [],
+        'queue_build_status': 'empty',
+        'effective_threshold': null,
+        'host_platform': 'spotify',
+      };
+
+      await pumpSessionScreen(tester);
+
+      // Advance well past the previous 20-second grace-period cutoff. With
+      // the time-based Timer/_screenOpenedAt logic removed, nothing should
+      // trigger a fallback to "Queue is empty" no matter how long the screen
+      // has been open, as long as queue_build_status stays "empty".
+      await tester.pump(const Duration(seconds: 30));
+      await tester.pump(const Duration(minutes: 5));
+
+      expect(
+        find.text("Building your queue... this'll just take a few seconds"),
+        findsOneWidget,
+      );
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Queue is empty'), findsNothing);
+    },
+  );
+
+  testWidgets(
     'queue already has tracks -> no building message, normal queue renders',
     (tester) async {
       queuePayload = {

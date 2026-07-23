@@ -24,7 +24,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _login() async {
-    final email = _emailController.text.trim();
+    final email = _emailController.text.trim().toLowerCase();
     final password = _passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
@@ -41,12 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (token != null) {
         await AuthService.saveToken(token);
         if (!mounted) return;
-        final me = await AuthService.getMe(token);
-        if (!mounted) return;
-        final platformToken = me?['platform_token'];
-        final hasPlatform =
-            platformToken != null && platformToken.toString().isNotEmpty;
-        context.go(hasPlatform ? '/home' : '/connect-platform');
+        context.go('/connect-platform');
       } else {
         _showError('Invalid email or password');
       }
@@ -101,7 +96,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: kSpaceMd),
                   AppTextField(
                     controller: _passwordController,
-                    obscureText: true,
+                    obscureText: false,
                     keyboardType: TextInputType.visiblePassword,
                     labelText: 'Password',
                     onSubmitted: (_) => _login(),

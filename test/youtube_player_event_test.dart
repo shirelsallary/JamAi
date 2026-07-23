@@ -57,6 +57,28 @@ void main() {
     });
   });
 
+  group('playbackPctForYouTubeEvent', () {
+    test('a natural "ended" state reports a full listen (100%), so TC-9\'s '
+        '>=50% export filter counts it', () {
+      final event = YouTubePlayerEvent.fromJson(
+        '{"type":"state_change","state":"ended"}',
+      )!;
+      expect(playbackPctForYouTubeEvent(event), 100.0);
+    });
+
+    test('an error event keeps the existing 35% (no regression)', () {
+      final event = YouTubePlayerEvent.fromJson('{"type":"error","code":153}')!;
+      expect(playbackPctForYouTubeEvent(event), 35.0);
+    });
+
+    test('a non-ended state_change (e.g. paused) is not treated as a completion', () {
+      final event = YouTubePlayerEvent.fromJson(
+        '{"type":"state_change","state":"paused"}',
+      )!;
+      expect(playbackPctForYouTubeEvent(event), 35.0);
+    });
+  });
+
   group('escapeForJsStringLiteral', () {
     test('escapes single quotes and backslashes', () {
       expect(escapeForJsStringLiteral("it's"), "it\\'s");
