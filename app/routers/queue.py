@@ -81,6 +81,8 @@ async def skip(
         db.add(PlaybackEvent(
             session_id=UUID(session_id),
             queue_track_id=current_track.id,
+            track_id=current_track.track_id,
+            platform=current_track.platform,
             user_id=current_user.id,
             event_type="skip",
             playback_pct=body.playback_pct,

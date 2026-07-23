@@ -13,6 +13,15 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
 
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        # Email addresses are case-insensitive in practice; keyboards on some
+        # devices (e.g. Samsung's) auto-capitalize the first letter typed into
+        # a field regardless of the app's requested capitalization, which
+        # would otherwise make login fail against a lowercase-stored email.
+        return v.strip().lower()
+
     @field_validator("password")
     @classmethod
     def password_min_length(cls, v: str) -> str:
@@ -24,6 +33,11 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
 
 
 class UserResponse(BaseModel):

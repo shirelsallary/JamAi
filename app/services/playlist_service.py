@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -10,6 +11,8 @@ from app.adapters.spotify_adapter import SpotifyAdapter
 from app.models.models import PlaybackEvent, QueueTrack, Session, SessionParticipant, User
 from app.services.queue_dna_engine import scan_saved_playlists, score_candidates
 from app.services.session_dna import load_or_build_session_dna
+
+logger = logging.getLogger(__name__)
 
 
 async def generate_playlist(
@@ -115,15 +118,20 @@ async def export_session(
             detail="Only the session host can export",
         )
 
-    # TC-9 filter: only tracks that were actually listened to past 50%
+    # TC-9 filter: only tracks that were actually listened to past 50%.
+    # Queried directly off playback_events (session_id, track_id, platform)
+    # rather than joined through queue_tracks — a rerank deletes and rebuilds
+    # every queue_tracks row on every skip/completion, so by export time the
+    # original row a listen was recorded against is almost always long gone.
+    # track_id/platform are the stable, platform-level identifiers that
+    # survive that (see PlaybackEvent's queue_track_id ON DELETE SET NULL).
     result = await db.execute(
-        select(QueueTrack)
-        .join(PlaybackEvent, PlaybackEvent.queue_track_id == QueueTrack.id)
-        .where(QueueTrack.session_id == UUID(session_id))
-        .group_by(QueueTrack.id)
+        select(PlaybackEvent.track_id, PlaybackEvent.platform)
+        .where(PlaybackEvent.session_id == UUID(session_id))
+        .group_by(PlaybackEvent.track_id, PlaybackEvent.platform)
         .having(func.max(PlaybackEvent.playback_pct) >= 50.0)
     )
-    qualifying_tracks = list(result.scalars().all())
+    qualifying_tracks = result.all()
 
     # Close session regardless of track count
     await db.execute(
@@ -149,6 +157,14 @@ async def export_session(
     except HTTPException:
         raise
     except Exception:
+        # TEMPORARY DEBUG LOGGING — added to diagnose a live 422 on this
+        # endpoint (create_playlist failing silently, no prior logging here
+        # at all). Remove or keep permanently once the actual cause is
+        # confirmed — see conversation notes.
+        logger.exception(
+            "adapter.create_playlist failed for session %s (host_platform=%s)",
+            session_id, session.host_platform,
+        )
         # Platform not connected or token invalid — session is still closed,
         # track_count is still returned so the client knows what qualified.
         raise HTTPException(

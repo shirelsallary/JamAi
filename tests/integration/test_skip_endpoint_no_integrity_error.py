@@ -113,21 +113,14 @@ async def test_real_skip_endpoint_commits_without_integrity_error(db, client, mo
     # this is the row whose presence is what triggers the ORM cascade bug
     # once the background rerank deletes its parent QueueTrack.
     #
-    # CAVEAT — this assertion is NOT proof the row survives against the real
-    # database: SQLite (this test DB) does not enforce FK constraints unless
-    # "PRAGMA foreign_keys=ON" is set per-connection, which conftest.py never
-    # does. Verified directly against the real Supabase Postgres (disposable
-    # rows, rolled back, not committed) that playback_events.queue_track_id's
-    # actual ON DELETE CASCADE constraint DOES delete this row once its
-    # parent queue_tracks row is removed — which rerank_from_candidates does
-    # for every queue_tracks row, including the one just-skipped, on every
-    # single rerank. So in production this event is expected to disappear
-    # here, unlike in this SQLite-backed test. See conversation notes: this
-    # is a separate, real bug (breaks the >=50%-listened TC-9 export filter
-    # in playlist_service.py) that passive_deletes=True does not fix and
-    # this task's scope explicitly excludes touching (would need either a
-    # schema change to ON DELETE SET NULL, or rerank_from_candidates itself
-    # to stop deleting+recreating every row on every rerank).
+    # UPDATE: queue_track_id is now nullable with ON DELETE SET NULL (was
+    # CASCADE) specifically so this row survives a rerank instead of being
+    # deleted along with its parent queue_tracks row — see migration
+    # 28203e263950 and PlaybackEvent.track_id/platform (denormalized at
+    # creation time in routers/queue.py, so TC-9's export filter in
+    # playlist_service.py no longer needs to join through queue_tracks at
+    # all). See test_tc9_export_survives_rerank.py for the dedicated
+    # regression coverage of that filter itself.
     async with TestSessionLocal() as verify_db:
         events = await verify_db.execute(
             select(PlaybackEvent).where(PlaybackEvent.session_id == session.id)

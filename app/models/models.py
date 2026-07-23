@@ -215,11 +215,21 @@ class PlaybackEvent(Base):
     session_id: Mapped[UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
     )
-    queue_track_id: Mapped[UUID] = mapped_column(
+    # nullable + SET NULL (not CASCADE) — rerank_from_candidates deletes and
+    # rebuilds every queue_tracks row on every skip/completion, so a hard
+    # CASCADE here erased playback history almost as soon as it was recorded,
+    # breaking TC-9's >=50%-listened export filter. The row now survives;
+    # only this now-stale link to a since-rebuilt queue_tracks row is
+    # dropped. track_id/platform below are the stable identifiers TC-9
+    # actually needs, denormalized from QueueTrack at creation time so they
+    # don't depend on that row still existing later.
+    queue_track_id: Mapped[UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("queue_tracks.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("queue_tracks.id", ondelete="SET NULL"),
+        nullable=True,
     )
+    track_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
     user_id: Mapped[UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
@@ -241,7 +251,7 @@ class PlaybackEvent(Base):
     )
 
     session: Mapped["Session"] = relationship("Session", back_populates="playback_events")
-    queue_track: Mapped["QueueTrack"] = relationship(
+    queue_track: Mapped["QueueTrack | None"] = relationship(
         "QueueTrack", back_populates="playback_events"
     )
     user: Mapped["User"] = relationship("User", back_populates="playback_events")
