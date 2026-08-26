@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run test suite
+        # Tests run entirely against an in-memory SQLite DB (see
+        # tests/conftest.py) and never make real Spotify/YouTube calls — none
+        # of these values need to be real, only syntactically valid, so no
+        # repo secrets are required here. ENCRYPTION_KEY specifically must be
+        # a well-formed Fernet key (app/services/token_encryption.py builds a
+        # Fernet instance from it at import time) or the app fails to import
+        # at all; this one is a throwaway generated for CI only.
+        env:
+          DATABASE_URL: postgresql+asyncpg://user:password@localhost:5432/dbname
+          SECRET_KEY: ci-test-secret-key-not-used-in-production
+          SPOTIFY_CLIENT_ID: ci-test-spotify-client-id
+          SPOTIFY_CLIENT_SECRET: ci-test-spotify-client-secret
+          SPOTIFY_REDIRECT_URI: jamai://spotify-callback
+          YOUTUBE_CLIENT_ID: ci-test-youtube-client-id
+          YOUTUBE_CLIENT_SECRET: ci-test-youtube-client-secret
+          ENCRYPTION_KEY: BwTnFdSsDfkxDX-hL036vkVOPJwQ6iZfmOr-cpHVm4w=
+        run: pytest -v
