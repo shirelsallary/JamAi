@@ -21,10 +21,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="JAM AI", version="1.0.0", lifespan=lifespan)
 
+# [SEC-2] No browser-based client exists (Flutter/Android native only, no
+# Origin header, not subject to CORS enforcement) — approved by the project
+# owner to close this down rather than guess a domain list. allow_origins=[]
+# + allow_credentials=False rejects every cross-origin browser request
+# outright instead of the previous allow_origins=["*"] + allow_credentials=True,
+# which made Starlette reflect any request's Origin back as an allowed,
+# credentialed origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
