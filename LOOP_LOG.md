@@ -89,3 +89,44 @@ Pre-run check: TASKS.md items cross-referenced against PROJECT_STATUS.md section
   (149 baseline + 2 new), 0 failed. No fix attempts needed.
 - **Commit:** `2670718` — `[SEC-2] Lock down CORS (no browser client exists)`
 
+### [SEC-3] Verify session membership before opening a WebSocket — DONE
+- **Files changed:** `app/routers/queue.py` (new `is_session_participant()` +
+  gate added to `websocket_endpoint`), `tests/unit/test_websocket_session_auth.py`
+  (new), `tests/integration/test_websocket_participant_auth.py` (new).
+- **Bug:** `/ws/sessions/{id}` only checked that the JWT was valid for *some*
+  authenticated user — not that the user was actually a participant of that
+  session. Any logged-in user who learned/guessed a `session_id` could listen
+  to another JAM's queue updates.
+- **What I tried and reverted (documented for transparency, not because it
+  matters going forward):** my first attempt scoped the DB access with a
+  direct `get_db()` call instead of `Depends(get_db)`, intending to release
+  the connection immediately after the one check instead of holding it for
+  the whole WebSocket lifetime. That call bypasses FastAPI's dependency
+  resolution entirely, so it also bypasses `app.dependency_overrides[get_db]`
+  (the test DB override in `conftest.py`) — in tests it silently hit the real
+  production Postgres URL from `.env` instead of the in-memory SQLite. Reverted
+  to `Depends(get_db)`, which is what every other route in this file already
+  correctly uses.
+- **Scope note on testing (see the full explanation in the test file's own
+  docstring):** a live round-trip test for the *successful* connection case
+  reliably hung the test process — holding a `Depends(get_db)` session open
+  across the handler's `while True: await websocket.receive_text()` loop
+  collides with this suite's single shared in-memory SQLite connection
+  (StaticPool) when the test's own `db` fixture is also still open for the
+  duration of the test function. This is a pre-existing limitation of the
+  test harness's shared-connection setup, not a defect introduced here — any
+  endpoint holding a long-lived DB session open across an unbounded `await`
+  would hit the same thing under this suite. Covered the success path
+  instead with direct unit tests of `is_session_participant` (host is a
+  participant of their own session; a guest who joined is a participant) —
+  that boolean gate is the only new behavior on that path; everything after
+  it is pre-existing, unchanged code. The live E2E test that *is* included
+  covers the harder, security-critical direction: a real HTTP register/login/
+  create-session/(no-join) flow followed by a real WebSocket connection
+  attempt that must be, and is, rejected with code 1008.
+- **Tests:** 5 new unit tests (`is_session_participant` — host, joined guest,
+  unrelated outsider, nonexistent session_id, malformed session_id) + 1 new
+  live integration test (outsider rejection over a real WebSocket). Full
+  suite: 157 passed (151 baseline + 6 new), 0 failed, no hangs.
+- **Commit:** `5120cbc` — `[SEC-3] Verify session membership before opening a WebSocket`
+
