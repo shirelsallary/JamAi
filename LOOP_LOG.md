@@ -77,3 +77,15 @@ Pre-run check: TASKS.md items cross-referenced against PROJECT_STATUS.md section
 - **Per LOOP_INSTRUCTIONS.md, this halts the entire loop.** SEC-3, REL-1,
   REL-2, REL-3, and INF-1 were not attempted.
 
+### [SEC-2] resumed — DONE
+- **Human decision received:** no browser-based client exists; approved
+  `allow_origins=[]`, `allow_credentials=False` instead of a domain
+  whitelist (see prior entry for why a whitelist wasn't guessed).
+- **Files changed:** `app/main.py` (CORSMiddleware config),
+  `tests/integration/test_cors_locked_down.py` (new).
+- **Tests:** 2 new tests — a simple cross-origin GET gets no
+  `access-control-allow-origin` header back, and a CORS preflight OPTIONS
+  from an arbitrary origin is rejected with 400. Full suite: 151 passed
+  (149 baseline + 2 new), 0 failed. No fix attempts needed.
+- **Commit:** `2670718` — `[SEC-2] Lock down CORS (no browser client exists)`
+
