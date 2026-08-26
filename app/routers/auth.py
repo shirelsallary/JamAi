@@ -14,6 +14,7 @@ from app.services.auth_service import (
     get_user_by_email,
     register_user,
 )
+from app.services.rate_limiter import auth_rate_limiter
 from app.services.token_encryption import encrypt_token
 
 router = APIRouter()
@@ -44,12 +45,17 @@ async def get_current_user(
     return user
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(auth_rate_limiter)],
+)
 async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     return await register_user(db, payload.email, payload.password)
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=Token, dependencies=[Depends(auth_rate_limiter)])
 async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
     user = await authenticate_user(db, payload.email, payload.password)
     if not user:

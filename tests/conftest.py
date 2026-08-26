@@ -118,6 +118,21 @@ async def clean_tables():
             await conn.execute(table.delete())
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_rate_limiters():
+    """[REL-2] auth_rate_limiter/action_rate_limiter are module-level
+    singletons shared by every request (matching production, where they're
+    meant to persist across requests) — but every test's requests come from
+    the same fixed client IP (httpx's ASGITransport default), so without a
+    reset between tests, hit counts would accumulate across the whole suite
+    and eventually 429 tests that have nothing to do with rate limiting."""
+    from app.services.rate_limiter import action_rate_limiter, auth_rate_limiter
+
+    auth_rate_limiter._hits.clear()
+    action_rate_limiter._hits.clear()
+    yield
+
+
 @pytest_asyncio.fixture
 async def db() -> AsyncSession:
     async with TestSessionLocal() as session:

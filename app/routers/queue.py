@@ -18,6 +18,7 @@ from app.services.auth_service import get_user_by_email
 from app.services.connection_manager import manager
 from app.services.debounce_service import debouncer
 from app.services.queue_optimizer import optimize_queue, rerank_queue
+from app.services.rate_limiter import action_rate_limiter
 from app.services.session_buffer import session_buffer
 from app.services.spotify_playback import attempt_spotify_playback, sync_native_queue
 
@@ -93,7 +94,11 @@ async def websocket_endpoint(
         manager.disconnect(session_id, websocket)
 
 
-@router.patch("/queue/{session_id}/skip", status_code=202)
+@router.patch(
+    "/queue/{session_id}/skip",
+    status_code=202,
+    dependencies=[Depends(action_rate_limiter)],
+)
 async def skip(
     session_id: str,
     body: SkipRequest,
@@ -138,7 +143,7 @@ async def skip(
     return {"message": "skip recorded, queue updating"}
 
 
-@router.post("/queue/{session_id}/play")
+@router.post("/queue/{session_id}/play", dependencies=[Depends(action_rate_limiter)])
 async def play(
     session_id: str,
     current_user=Depends(get_current_user),

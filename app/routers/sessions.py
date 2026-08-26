@@ -11,6 +11,7 @@ from app.schemas.schemas import (
 )
 from app.services.connection_manager import manager
 from app.services.queue_optimizer import guest_joined
+from app.services.rate_limiter import action_rate_limiter
 from app.services.session_service import (
     close_session,
     create_session,
@@ -37,7 +38,11 @@ async def create(
     )
 
 
-@router.get("/sessions/{session_code}/join", response_model=JoinSessionResponse)
+@router.get(
+    "/sessions/{session_code}/join",
+    response_model=JoinSessionResponse,
+    dependencies=[Depends(action_rate_limiter)],
+)
 async def join(
     session_code: str,
     background_tasks: BackgroundTasks,
