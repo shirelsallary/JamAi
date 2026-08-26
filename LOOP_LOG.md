@@ -206,3 +206,47 @@ Pre-run check: TASKS.md items cross-referenced against PROJECT_STATUS.md section
   needed.
 - **Commit:** `bb5eb29` — `[REL-2] Add rate limiting to auth, session join, and queue actions`
 
+### [REL-3] JWT refresh flow — DONE (backend) / BLOCKED (Flutter client, out of repo scope)
+- **Files changed:** `app/config.py` (`REFRESH_TOKEN_EXPIRE_MINUTES`, default
+  7 days), `app/services/auth_service.py` (new `create_refresh_token`;
+  `create_access_token` now stamps `"type": "access"`),
+  `app/schemas/schemas.py` (`Token` gained a required `refresh_token` field;
+  new `RefreshRequest`), `app/routers/auth.py` (`login` now issues+returns
+  both tokens; new `POST /auth/refresh`; `get_current_user` now rejects a
+  refresh token used as an access token), `app/routers/queue.py` (same
+  `type != "access"` rejection added to the `/ws/sessions/{id}` JWT check,
+  for the same reason), `.env.example` (documented the new optional
+  setting), `tests/integration/test_jwt_refresh_flow.py` (new).
+- **Design choice — stateless, no new migration:** implemented the refresh
+  token as a second, longer-lived JWT (`"type": "refresh"` claim) rather
+  than a DB-tracked token table. This deliberately avoids a new Alembic
+  migration, which per LOOP_INSTRUCTIONS.md's global stop conditions would
+  have required stopping the loop and only preparing a script for manual
+  approval rather than running it against the live Supabase DB. Documented
+  tradeoff (in `create_refresh_token`'s own docstring): this refresh token
+  is not individually revocable — nothing tracks issued ones server-side, so
+  a leaked one stays valid until it naturally expires (7 days). A revocable
+  design needs the DB-backed table, i.e. a separate, larger change with its
+  own migration.
+- **Repo-scope split, per the task's own instruction:** the loop runs only on
+  `jam-ai-backend` (a separate git repo from `jam_ai_app`). The Flutter
+  side — storing the refresh token, calling `/auth/refresh` automatically
+  before the access token expires — was **not touched at all**.
+  `TASKS.md`'s REL-3 entry is marked `[BLOCKED — out of repo scope]` for that
+  half.
+- **Fix attempts:** 1 — first version of
+  `test_refresh_issues_a_new_access_token_without_relogin` asserted the new
+  access token string differs from the original; both are minted for the
+  same user within the same wall-clock second, and the JWT only encodes
+  `{sub, type, exp}` at whole-second resolution, so they were legitimately
+  byte-identical (not a bug). Removed that specific assertion; kept the
+  meaningful one (the refreshed token actually authenticates against
+  `/auth/me`).
+- **Tests:** 6 new integration tests — login returns both tokens; refresh
+  produces a working access token; an already-expired access token is
+  rejected by `/auth/me` but a still-valid refresh token recovers access
+  without re-login; an access token can't be used as a refresh token and
+  vice versa; an expired refresh token is rejected. Full suite: 172 passed
+  (166 baseline + 6 new), 0 failed.
+- **Commit:** `f7e57d6` — `[REL-3] Add JWT refresh flow (backend)`
+
