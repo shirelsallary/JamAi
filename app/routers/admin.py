@@ -1,14 +1,15 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.routers.auth import get_current_user
 from app.services.cache_service import cache
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 @router.get("/cache/stats")
-async def cache_stats():
+async def cache_stats(current_user=Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     total_keys = len(cache._store)
     active_keys = sum(
