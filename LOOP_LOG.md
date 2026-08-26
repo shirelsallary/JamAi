@@ -146,3 +146,28 @@ Pre-run check: TASKS.md items cross-referenced against PROJECT_STATUS.md section
   attempts needed.
 - **Commit:** `32d7823` — `[SEC-4] Require a valid JWT on /admin/cache/stats`
 
+### [REL-1] Wire CircuitBreaker into real Spotify/YouTube adapter calls — DONE
+- **Files changed:** `app/adapters/platform_factory.py` (new
+  `_protect_with_circuit_breaker`, called from `get_platform_adapter`),
+  `app/adapters/circuit_breaker.py` (generalized the open-circuit error
+  message, previously hardcoded to "YouTube Music" from when it was never
+  actually used for Spotify either), `tests/unit/test_platform_factory_circuit_breaker.py`
+  (new).
+- **Design choice:** rather than hand-picking call sites in Queue Optimizer /
+  Playlist-Export individually (which is where the task said the breaker
+  mattered "mainly", not exclusively), wrapped every public async method on
+  the adapter object at its single construction point
+  (`get_platform_adapter`) — every current and future caller (queue engine,
+  export, spotify_playback.py, etc.) gets covered automatically, and it's
+  fewer, more centralized lines than patching each call site. Wrapping is
+  done in place on the same instance (setattr per method name), not a
+  separate proxy class, specifically so `isinstance(adapter, SpotifyAdapter)`
+  (used by `playlist_service.export_session` to pick the track URI format)
+  keeps working — verified by its own test.
+- **Tests:** 3 new unit tests — repeated failures trip the breaker and the
+  underlying method stops being invoked (proven via a call counter, not just
+  the exception type), `isinstance` still holds on a wrapped adapter, and
+  successful calls never trip it. Full suite: 162 passed (159 baseline + 3
+  new), 0 failed. No fix attempts needed.
+- **Commit:** `9fc6061` — `[REL-1] Wire CircuitBreaker into real Spotify/YouTube adapter calls`
+
