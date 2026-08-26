@@ -60,7 +60,9 @@ async def websocket_endpoint(
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str | None = payload.get("sub")
-        if not email:
+        # [REL-3] Same restriction as get_current_user (routers/auth.py) — a
+        # refresh token must not be usable to open a live connection either.
+        if not email or payload.get("type") != "access":
             raise JWTError()
     except JWTError:
         await websocket.close(code=1008)

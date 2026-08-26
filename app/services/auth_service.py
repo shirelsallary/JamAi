@@ -22,6 +22,28 @@ def create_access_token(data: dict) -> str:
     payload = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     payload["exp"] = expire
+    payload["type"] = "access"
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def create_refresh_token(data: dict) -> str:
+    """[REL-3] A separate, longer-lived JWT (not a DB-tracked token — no new
+    migration needed) so a user isn't forced to log back in every
+    ACCESS_TOKEN_EXPIRE_MINUTES during a single JAM session. The "type" claim
+    keeps this from being usable as an access token directly (see
+    get_current_user in routers/auth.py, and the same check in the
+    /ws/sessions/{id} JWT decode in routers/queue.py) — it can only be
+    redeemed at POST /auth/refresh for a new access token.
+
+    Known limitation: stateless, like the access token — nothing tracks
+    issued refresh tokens server-side, so a leaked one is valid until it
+    naturally expires; it cannot be individually revoked (e.g. on logout or
+    suspected compromise). A revocable design would need a DB-backed token
+    table + migration, which is a larger, separate change."""
+    payload = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES)
+    payload["exp"] = expire
+    payload["type"] = "refresh"
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
