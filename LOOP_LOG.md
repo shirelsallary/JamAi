@@ -130,3 +130,19 @@ Pre-run check: TASKS.md items cross-referenced against PROJECT_STATUS.md section
   suite: 157 passed (151 baseline + 6 new), 0 failed, no hangs.
 - **Commit:** `5120cbc` — `[SEC-3] Verify session membership before opening a WebSocket`
 
+### [SEC-4] Require a valid JWT on /admin/cache/stats — DONE
+- **Files changed:** `app/routers/admin.py` (added `current_user=Depends(get_current_user)`),
+  `tests/integration/test_admin_requires_auth.py` (new).
+- **Scope check:** `app/routers/admin.py` has exactly one endpoint
+  (`GET /admin/cache/stats`) — confirmed before starting, so no other
+  endpoints needed the same fix in this item.
+- **Note:** this requires *any* valid JWT (matching the task's own
+  instruction to reuse the existing dependency, and matching the fact that
+  this codebase has no admin/role concept at all — `User` has no role field).
+  It is not an admin-only check; it only closes the "reachable by literally
+  anyone, no auth at all" gap.
+- **Tests:** 2 new tests (no JWT → 401, valid JWT → 200 with the expected
+  body). Full suite: 159 passed (157 baseline + 2 new), 0 failed. No fix
+  attempts needed.
+- **Commit:** `32d7823` — `[SEC-4] Require a valid JWT on /admin/cache/stats`
+
