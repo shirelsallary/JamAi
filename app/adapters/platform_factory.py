@@ -1,3 +1,6 @@
+import functools
+import inspect
+
 from fastapi import HTTPException, status
 
 from app.adapters.circuit_breaker import CircuitBreaker
@@ -27,15 +30,41 @@ def get_circuit_breaker(user_id: str) -> CircuitBreaker:
     return _circuit_breakers[user_id]
 
 
+def _protect_with_circuit_breaker(adapter, breaker: CircuitBreaker):
+    """[REL-1] CircuitBreaker existed and was tested (test_circuit_breaker.py)
+    but was never actually wired into a real Spotify/YouTube call — repeated
+    failures against either platform (rate-limited, down, bad token) just kept
+    hitting them again on every queue build/rerank/export. Wraps every public
+    async method the adapter defines to route through the user's breaker,
+    in place on the same instance (not a separate proxy object) so
+    isinstance(adapter, SpotifyAdapter) checks elsewhere (e.g.
+    playlist_service.export_session) keep working."""
+    for name, _ in inspect.getmembers(type(adapter), predicate=inspect.iscoroutinefunction):
+        if name.startswith("_"):
+            continue
+        bound_method = getattr(adapter, name)
+
+        def _wrap(method):
+            @functools.wraps(method)
+            async def wrapper(*args, **kwargs):
+                return await breaker.call(method, *args, **kwargs)
+            return wrapper
+
+        setattr(adapter, name, _wrap(bound_method))
+    return adapter
+
+
 def get_platform_adapter(user: User) -> SpotifyAdapter | YouTubeAdapter:
+    breaker = get_circuit_breaker(str(user.id))
+
     if user.platform == "spotify" and user.platform_token:
         token = decrypt_token(user.platform_token)
         refresh = decrypt_token(user.platform_refresh) if user.platform_refresh else ""
-        return SpotifyAdapter(user.id, token, refresh)
+        return _protect_with_circuit_breaker(SpotifyAdapter(user.id, token, refresh), breaker)
 
     if user.platform == "youtube" and user.platform_token:
         auth_json = decrypt_token(user.platform_token)
-        return YouTubeAdapter(user.id, auth_json)
+        return _protect_with_circuit_breaker(YouTubeAdapter(user.id, auth_json), breaker)
 
     raise NoPlatformConnectedError(user.id)
 

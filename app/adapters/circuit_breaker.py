@@ -41,9 +41,12 @@ class CircuitBreaker:
             if elapsed >= self.recovery_timeout:
                 self._state = State.HALF_OPEN
             else:
+                # [REL-1] Wording was YouTube-specific from when this class was
+                # only ever instantiated for YouTube calls; it's now shared
+                # across both adapters via platform_factory.get_platform_adapter.
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="YouTube Music temporarily unavailable",
+                    detail="Music platform temporarily unavailable",
                 )
 
         try:
