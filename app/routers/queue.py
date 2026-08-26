@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.platform_factory import NoPlatformConnectedError, get_platform_adapter
 from app.config import settings
 from app.database import get_db
-from app.models.models import PlaybackEvent, QueueTrack, Session, User
+from app.models.models import PlaybackEvent, QueueTrack, Session, SessionParticipant, User
 from app.routers.auth import get_current_user
 from app.schemas.schemas import QueueResponse, QueueTrackResponse, SkipRequest
+from app.services.auth_service import get_user_by_email
 from app.services.connection_manager import manager
 from app.services.debounce_service import debouncer
 from app.services.queue_optimizer import optimize_queue, rerank_queue
@@ -24,11 +25,29 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+async def is_session_participant(db: AsyncSession, session_id: str, user_id) -> bool:
+    """[SEC-3] True iff user_id is a participant (host or guest — create_session
+    always inserts the host as a SessionParticipant too, see session_service.py)
+    of session_id. Invalid/non-existent session_id -> False, never raises."""
+    try:
+        sid = UUID(session_id)
+    except ValueError:
+        return False
+    result = await db.execute(
+        select(SessionParticipant.id).where(
+            SessionParticipant.session_id == sid,
+            SessionParticipant.user_id == user_id,
+        )
+    )
+    return result.first() is not None
+
+
 @router.websocket("/ws/sessions/{session_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
     session_id: str,
     token: str = Query(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
     await manager.connect(session_id, websocket)
 
@@ -43,6 +62,20 @@ async def websocket_endpoint(
         if not email:
             raise JWTError()
     except JWTError:
+        await websocket.close(code=1008)
+        manager.disconnect(session_id, websocket)
+        return
+
+    # [SEC-3] A valid JWT alone used to be enough to listen to ANY session's
+    # broadcast — any authenticated user who learned/guessed a session_id
+    # could eavesdrop on a JAM they never joined. `db` must come through
+    # Depends(get_db) rather than calling get_db() directly — FastAPI's test
+    # override (app.dependency_overrides[get_db], see conftest.py) only
+    # intercepts DI-resolved dependencies; a direct call bypasses it and
+    # silently hits the real production database.
+    user = await get_user_by_email(db, email)
+    authorized = user is not None and await is_session_participant(db, session_id, user.id)
+    if not authorized:
         await websocket.close(code=1008)
         manager.disconnect(session_id, websocket)
         return
