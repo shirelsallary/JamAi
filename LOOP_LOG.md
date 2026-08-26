@@ -171,3 +171,38 @@ Pre-run check: TASKS.md items cross-referenced against PROJECT_STATUS.md section
   new), 0 failed. No fix attempts needed.
 - **Commit:** `9fc6061` — `[REL-1] Wire CircuitBreaker into real Spotify/YouTube adapter calls`
 
+### [REL-2] Add rate limiting to auth, session join, and queue actions — DONE
+- **Files changed:** `app/services/rate_limiter.py` (new — in-memory,
+  per-client-IP fixed-window `RateLimiter`), `app/routers/auth.py`
+  (register + login, 10/min), `app/routers/sessions.py` (join, 30/min),
+  `app/routers/queue.py` (skip + play, 30/min), `tests/conftest.py` (new
+  autouse fixture resetting the shared limiter state between tests),
+  `tests/unit/test_rate_limiter.py` + `tests/integration/test_rate_limiting_wired.py`
+  (new).
+- **No new pip dependency** — implemented as a small in-memory class matching
+  this codebase's existing single-process service style
+  (ConnectionManager/DebounceService/CacheService already work this way), per
+  LOOP_INSTRUCTIONS.md's rule to log it explicitly if one were added. None was.
+- **Test-suite-wide side effect I had to handle:** the limiter is a
+  module-level singleton (matches production intent — state persists across
+  requests), but every test shares the same client IP (httpx's
+  `ASGITransport` always reports `("127.0.0.1", 123)`). Without a reset, hit
+  counts would accumulate across the *entire* suite and eventually 429 tests
+  that have nothing to do with rate limiting. Added an autouse
+  `_reset_rate_limiters` fixture in `conftest.py` to clear both limiters'
+  state before every test.
+- **Known limitation (documented in the module docstring):** in-memory means
+  limits reset on restart and aren't shared across worker processes — the
+  same already-accepted tradeoff as `ConnectionManager`/`DebounceService`/
+  `CacheService`. Also keyed by `request.client.host`, which behind a
+  reverse proxy (e.g. Render) without trusted `X-Forwarded-For` handling may
+  collapse to the proxy's IP for every caller — no such trusted-proxy config
+  exists yet to key off instead, so this is a known gap, not silently swept
+  under the rug.
+- **Tests:** 3 new unit tests directly against `RateLimiter` (under-limit
+  succeeds, over-limit raises 429, per-IP isolation) + 1 new integration test
+  proving `/auth/login` itself returns 429 after exceeding the wired limit.
+  Full suite: 166 passed (162 baseline + 4 new), 0 failed. No fix attempts
+  needed.
+- **Commit:** `bb5eb29` — `[REL-2] Add rate limiting to auth, session join, and queue actions`
+
